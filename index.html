@@ -509,24 +509,84 @@
   #view-results .results-head { text-align: center; margin-top: 6px; }
   #view-results h2 { font-size: 21px; }
   #view-results .sub { margin-top: 6px; font-size: 13.5px; color: var(--text-dim); }
-  .results-scroll { flex: 1; overflow-y: auto; margin-top: 22px; }
-  .grid {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
-    padding-bottom: 18px;
+
+  /* ---------- 360° tour viewer ---------- */
+
+  .tour-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 16px; }
+  .tour-stage {
+    position: relative; flex: 1; min-height: 0;
+    border-radius: 20px; overflow: hidden;
+    background: #000;
+    border: 1px solid var(--border);
+    touch-action: none;
+    user-select: none; -webkit-user-select: none;
+    cursor: grab;
   }
-  .cell {
-    position: relative; aspect-ratio: 1; border-radius: 13px; overflow: hidden;
-    background: var(--surface-2); border: 1px solid var(--border);
-    cursor: pointer; animation: cell-in 0.4s cubic-bezier(0.16,1,0.3,1) both;
+  .tour-stage.dragging { cursor: grabbing; }
+  .tour-layer {
+    position: absolute; inset: -6% -10%;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity 0.32s ease;
+    will-change: opacity, transform;
   }
-  @keyframes cell-in { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
-  .cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .cell .n {
-    position: absolute; bottom: 4px; right: 4px;
-    background: rgba(0,0,0,0.6); color: #fff; font-size: 9.5px; font-weight: 700;
-    padding: 2px 5px; border-radius: 6px; font-family: var(--font-mono);
+  .tour-layer.active { opacity: 1; z-index: 2; }
+  .tour-layer img {
+    width: 100%; height: 100%; object-fit: cover;
+    transition: transform 0.15s linear;
+    -webkit-user-drag: none; user-select: none; -webkit-touch-callout: none;
+    pointer-events: none;
   }
-  .results-actions { display: flex; flex-direction: column; gap: 10px; padding-bottom: 4px; }
+  .tour-vignette {
+    position: absolute; inset: 0; pointer-events: none; z-index: 3;
+    background:
+      radial-gradient(ellipse 120% 90% at 50% 50%, transparent 55%, rgba(0,0,0,0.55) 100%);
+  }
+  .tour-heading {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 4; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    pointer-events: none;
+  }
+  .tour-heading .badge {
+    font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--accent-2); background: rgba(0,0,0,0.5); border: 1px solid rgba(70,224,198,0.25);
+    padding: 4px 10px; border-radius: 999px;
+  }
+  .tour-heading .label {
+    font-size: 13px; font-weight: 700; color: #fff;
+    background: rgba(0,0,0,0.4); padding: 5px 12px; border-radius: 999px;
+    backdrop-filter: blur(8px);
+  }
+  .tour-hint {
+    position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 4; font-size: 11px; color: rgba(255,255,255,0.55);
+    background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 999px;
+    display: flex; align-items: center; gap: 6px;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
+  }
+  .tour-hint.hide { opacity: 0; }
+  .tour-hint svg { width: 13px; height: 13px; }
+  .tour-dots {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    z-index: 4; display: flex; flex-direction: column; gap: 5px;
+  }
+  .tour-dots span {
+    width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.25);
+    transition: background 0.2s ease, transform 0.2s ease;
+  }
+  .tour-dots span.current { background: var(--accent-2); transform: scale(1.6); }
+
+  .tour-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-top: 12px; gap: 10px;
+  }
+  .tour-footer .eyebrow { color: var(--accent-2); }
+  .tour-link {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 12px; text-decoration: underline; cursor: pointer; padding: 4px;
+  }
+
+  .results-actions { display: flex; flex-direction: column; gap: 10px; padding-top: 16px; }
 
   .lightbox {
     position: absolute; inset: 0; z-index: 60;
@@ -730,10 +790,30 @@
         <div class="pad safe-top" style="flex:1; display:flex; flex-direction:column; min-height:0;">
           <div class="results-head">
             <h2>Tu habitación fue escaneada</h2>
-            <p class="sub" id="results-sub">Se capturaron 12 vistas del espacio.</p>
+            <p class="sub" id="results-sub">Recorrido de 12 vistas del espacio.</p>
           </div>
-          <div class="results-scroll">
-            <div class="grid" id="grid"></div>
+
+          <div class="tour-wrap">
+            <div class="tour-stage" id="tour-stage">
+              <!-- Two stacked layers cross-fade between shots; nothing here
+                   is stitched pixel data, each layer is one original photo. -->
+              <div class="tour-layer" id="tour-layer-a"><img alt="" draggable="false"></div>
+              <div class="tour-layer" id="tour-layer-b"><img alt="" draggable="false"></div>
+              <div class="tour-vignette"></div>
+              <div class="tour-heading">
+                <span class="badge">Recorrido 360°</span>
+                <span class="label" id="tour-label">Frente</span>
+              </div>
+              <div class="tour-dots" id="tour-dots"></div>
+              <div class="tour-hint" id="tour-hint">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M4 12h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Arrastrá para mirar alrededor
+              </div>
+            </div>
+            <div class="tour-footer">
+              <span class="eyebrow" id="results-sub2">Explorá las diferentes vistas de tu habitación</span>
+              <button class="tour-link" id="btn-view-photos">Ver las 12 fotos</button>
+            </div>
           </div>
         </div>
         <div class="pad safe-bottom results-actions" style="padding-bottom:30px;">
@@ -764,21 +844,40 @@
 (function () {
   "use strict";
 
+  // Spatial capture sequence for the 360° tour: the first 8 steps are a full
+  // turn on the spot (45° apart), then 4 extra nodes (ceiling, floor, and two
+  // bonus elevated/general views) — all from the same standing point. yaw/pitch
+  // here are the FALLBACK angles used when device sensors aren't available;
+  // when they are, the real measured orientation is stored per shot instead
+  // (see captureFrame()).
   var scanSteps = [
-    { instruction: "Apuntá hacia la pared principal", detail: "Intentá mostrar la mayor parte de la habitación", targetYaw: 0 },
-    { instruction: "Girá lentamente hacia la derecha", detail: "Buscá una nueva perspectiva de la misma pared", targetYaw: 25 },
-    { instruction: "Mostrá la pared derecha", detail: "Recorré la pared completa, de arriba a abajo", targetYaw: 25 },
-    { instruction: "Mostrá la esquina derecha", detail: "Buscá el punto donde se unen las dos paredes", targetYaw: 20 },
-    { instruction: "Girá hacia la pared trasera", detail: "Encuadrá una vista amplia de la pared del fondo", targetYaw: 35 },
-    { instruction: "Mostrá la esquina izquierda", detail: "Ubicá la esquina opuesta a la anterior", targetYaw: 30 },
-    { instruction: "Mostrá la pared izquierda", detail: "Incluí puertas o ventanas si hay en esta pared", targetYaw: 25 },
-    { instruction: "Retrocedé un poco para una vista más amplia", detail: "Alejate un paso para captar el conjunto desde otro punto", targetYaw: 15 },
-    { instruction: "Apuntá hacia el techo", detail: "Inclinate hacia arriba para mostrar el techo", targetYaw: 0 },
-    { instruction: "Apuntá hacia el suelo", detail: "Inclinate hacia abajo para mostrar el piso", targetYaw: 0 },
-    { instruction: "Tomá una segunda vista panorámica", detail: "Girá describiendo un arco amplio por la habitación", targetYaw: 40 },
-    { instruction: "Mostrá una vista general final", detail: "Encuadrá la habitación completa una última vez", targetYaw: 20 }
+    { id: 1, instruction: "Apuntá al frente", detail: "Quedate parado en el mismo lugar durante todo el escaneo", yaw: 0, pitch: 0, kind: "ring" },
+    { id: 2, instruction: "Girá 45° a la derecha", detail: "Frente-derecha — un giro corto, sin caminar", yaw: 45, pitch: 0, kind: "ring" },
+    { id: 3, instruction: "Girá otros 45° a la derecha", detail: "Ahora apuntás hacia la derecha", yaw: 90, pitch: 0, kind: "ring" },
+    { id: 4, instruction: "Seguí girando a la derecha", detail: "Fondo-derecha, buscando el sector trasero", yaw: 135, pitch: 0, kind: "ring" },
+    { id: 5, instruction: "Apuntá hacia el fondo", detail: "La pared opuesta a la primera captura", yaw: 180, pitch: 0, kind: "ring" },
+    { id: 6, instruction: "Girá 45° más", detail: "Fondo-izquierda", yaw: 225, pitch: 0, kind: "ring" },
+    { id: 7, instruction: "Apuntá hacia la izquierda", detail: "Pared izquierda del ambiente", yaw: 270, pitch: 0, kind: "ring" },
+    { id: 8, instruction: "Completá el giro", detail: "Frente-izquierda — última vista del anillo, volviendo al frente", yaw: 315, pitch: 0, kind: "ring" },
+    { id: 9, instruction: "Mirá hacia arriba", detail: "Inclinate para mostrar el techo, sin cambiar de lugar", yaw: 0, pitch: 65, kind: "ceiling" },
+    { id: 10, instruction: "Mirá hacia abajo", detail: "Inclinate para mostrar el piso, sin cambiar de lugar", yaw: 0, pitch: -65, kind: "floor" },
+    { id: 11, instruction: "Vista elevada adicional", detail: "Un poco más arriba que el anillo, mismo lugar", yaw: 45, pitch: 30, kind: "elevated" },
+    { id: 12, instruction: "Última vista general", detail: "Encuadrá el ambiente una vez más antes de terminar", yaw: 200, pitch: 12, kind: "wide" }
   ];
   var TOTAL = scanSteps.length;
+
+  // How much the phone is expected to turn/tilt between consecutive steps —
+  // derived from the yaw/pitch table above instead of hand-authored, used
+  // only for the soft "position detected" visual hint.
+  function angleDiff(a, b) {
+    var d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
+  }
+  scanSteps.forEach(function (step, i) {
+    if (i === 0) { step.expectedTurn = 0; return; }
+    var prev = scanSteps[i - 1];
+    step.expectedTurn = Math.max(angleDiff(step.yaw, prev.yaw), Math.abs(step.pitch - prev.pitch));
+  });
 
   var state = {
     stepIndex: 0,
@@ -788,6 +887,7 @@
     stream: null,
     orientationGranted: false,
     orientationBaseline: null,
+    yawCalibration: null,
     movement: 0,
     positionDetected: true
   };
@@ -799,7 +899,8 @@
    "scan-count","progress-fill","guide","step-instruction","step-detail","manual-tag",
    "thumb","btn-capture","permission-overlay","permission-icon","permission-title","permission-text","permission-code",
    "btn-retry-camera","btn-demo-fallback","btn-exit-scan",
-   "complete-sub","btn-process","stage-list","results-sub","grid","btn-new-scan","btn-home",
+   "complete-sub","btn-process","stage-list","results-sub","btn-new-scan","btn-home",
+   "tour-stage","tour-layer-a","tour-layer-b","tour-label","tour-dots","tour-hint","btn-view-photos",
    "lightbox","lb-position","lb-img","lb-caption","lb-prev","lb-next","btn-lb-close","canvas"
   ].forEach(function (id) { els[id.replace(/-([a-z])/g, function(_,c){return c.toUpperCase();})] = document.getElementById(id); });
 
@@ -846,6 +947,14 @@
     if (e.alpha === null && e.beta === null && e.gamma === null) return;
     sawOrientationEvent = true;
     var current = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
+
+    // Calibrate once, on the very first reading: everything captured during
+    // this scan is measured relative to "however the phone was pointed at
+    // the start" (yaw 0 / pitch 0), not true compass north.
+    if (!state.yawCalibration) {
+      state.yawCalibration = { alpha: current.alpha || 0, beta: current.beta || 0 };
+    }
+
     if (state.orientationBaseline) {
       var a = state.orientationBaseline;
       var dAlpha = Math.abs((current.alpha || 0) - (a.alpha || 0));
@@ -870,10 +979,10 @@
   function updatePositionDetected() {
     var step = scanSteps[state.stepIndex];
     var detected;
-    if (!sensorsAvailable() || state.stepIndex === 0 || step.targetYaw === 0) {
+    if (!sensorsAvailable() || state.stepIndex === 0 || step.expectedTurn === 0) {
       detected = true;
     } else {
-      detected = state.movement >= Math.min(10, step.targetYaw * 0.4);
+      detected = state.movement >= Math.min(10, step.expectedTurn * 0.4);
     }
     state.positionDetected = detected;
     els.guide.classList.toggle("detected", detected);
@@ -1103,10 +1212,39 @@
     return { dataUrl: canvas.toDataURL("image/jpeg", 0.85), quality: q };
   }
 
+  function normalizeYaw(deg) {
+    deg = deg % 360;
+    if (deg > 180) deg -= 360;
+    if (deg < -180) deg += 360;
+    return deg;
+  }
+
+  // Real measured orientation for this shot when sensors are available and
+  // calibrated; otherwise the guided template's predefined yaw/pitch is used
+  // as a fallback, so every capture always ends up with a usable position.
+  function captureOrientation(step) {
+    if (sensorsAvailable() && state.yawCalibration && state.lastOrientation) {
+      var yaw = normalizeYaw((state.lastOrientation.alpha || 0) - state.yawCalibration.alpha);
+      var pitch = (state.lastOrientation.beta || 0) - state.yawCalibration.beta;
+      pitch = Math.max(-90, Math.min(90, pitch));
+      return { yaw: yaw, pitch: pitch, source: "sensor" };
+    }
+    return { yaw: step.yaw, pitch: step.pitch, source: "fallback" };
+  }
+
   els.btnCapture.addEventListener("click", function () {
     var result = captureFrame();
     var step = scanSteps[state.stepIndex];
-    state.shots.push({ instruction: step.instruction, dataUrl: result.dataUrl, quality: result.quality });
+    var orientation = captureOrientation(step);
+    state.shots.push({
+      instruction: step.instruction,
+      dataUrl: result.dataUrl,
+      quality: result.quality,
+      yaw: orientation.yaw,
+      pitch: orientation.pitch,
+      kind: step.kind,
+      orientationSource: orientation.source
+    });
 
     els.flash.classList.remove("go"); void els.flash.offsetWidth; els.flash.classList.add("go");
     els.thumb.classList.remove("empty");
@@ -1144,6 +1282,8 @@
     state.stepIndex = 0;
     state.shots = [];
     state.demoMode = false;
+    state.yawCalibration = null;
+    state.orientationBaseline = null;
     els.thumb.classList.add("empty");
     els.thumb.innerHTML = "<span>Sin capturas</span>";
   }
@@ -1177,19 +1317,144 @@
     }, 750 * rows.length + 650);
   });
 
-  // ---------------- Results ----------------
+  // ---------------- 360° tour viewer ----------------
+  //
+  // This is NOT a stitched panorama: each shot is the original photo,
+  // untouched. The viewer just knows the (yaw, pitch) each photo was taken
+  // at (real, from the device's sensors, or the guided template's angle as
+  // a fallback) and shows whichever shot is angularly closest to the
+  // direction the viewer is currently "looking", cross-fading between shots
+  // as you drag. It reads like a navigable tour, not a merged image.
+
+  var tour = {
+    yaw: 0,
+    pitch: 0,
+    activeIndex: -1,
+    activeLayer: "a",
+    dragging: false,
+    moved: false,
+    pointerId: null,
+    startX: 0, startY: 0, startYaw: 0, startPitch: 0
+  };
+  var tourBound = false;
+  var YAW_PER_PX = 0.35;
+  var PITCH_PER_PX = 0.28;
+
+  function nearestShotIndex(yaw, pitch) {
+    var best = 0, bestDist = Infinity;
+    state.shots.forEach(function (shot, i) {
+      var dy = angleDiff(shot.yaw, yaw);
+      var dp = (shot.pitch || 0) - pitch;
+      var dist = Math.sqrt(dy * dy + (dp * 1.3) * (dp * 1.3));
+      if (dist < bestDist) { bestDist = dist; best = i; }
+    });
+    return best;
+  }
+
+  function updateTourView() {
+    if (!state.shots.length) return;
+    var idx = nearestShotIndex(tour.yaw, tour.pitch);
+    var shot = state.shots[idx];
+
+    if (idx !== tour.activeIndex) {
+      var incoming = tour.activeLayer === "a" ? els.tourLayerB : els.tourLayerA;
+      var outgoing = tour.activeLayer === "a" ? els.tourLayerA : els.tourLayerB;
+      var img = incoming.querySelector("img");
+      img.src = shot.dataUrl;
+      img.alt = shot.instruction;
+      incoming.classList.add("active");
+      outgoing.classList.remove("active");
+      tour.activeLayer = tour.activeLayer === "a" ? "b" : "a";
+      tour.activeIndex = idx;
+
+      els.tourLabel.textContent = shot.instruction;
+      var dots = els.tourDots.children;
+      for (var i = 0; i < dots.length; i++) dots[i].classList.toggle("current", i === idx);
+    }
+
+    // Subtle pan/zoom of the current photo toward the residual drag offset —
+    // still the same untouched image, just shifted within its own frame, to
+    // sell continuity between the discrete shots.
+    var activeEl = (tour.activeLayer === "a" ? els.tourLayerB : els.tourLayerA).querySelector("img");
+    var offYaw = Math.max(-45, Math.min(45, tour.yaw - shot.yaw));
+    var offPitch = Math.max(-45, Math.min(45, tour.pitch - (shot.pitch || 0)));
+    activeEl.style.transform = "scale(1.06) translate(" + (-offYaw * 0.9) + "px, " + (offPitch * 0.9) + "px)";
+  }
+
+  function buildTourDots() {
+    els.tourDots.innerHTML = "";
+    state.shots.forEach(function () {
+      var dot = document.createElement("span");
+      els.tourDots.appendChild(dot);
+    });
+  }
+
+  function bindTourEvents() {
+    if (tourBound) return;
+    tourBound = true;
+    var stage = els.tourStage;
+
+    stage.addEventListener("pointerdown", function (e) {
+      // Prevent native text-selection/drag gestures from hijacking the
+      // pointer capture mid-drag (they'd otherwise fire pointercancel).
+      e.preventDefault();
+      tour.dragging = true;
+      tour.moved = false;
+      tour.pointerId = e.pointerId;
+      tour.startX = e.clientX;
+      tour.startY = e.clientY;
+      tour.startYaw = tour.yaw;
+      tour.startPitch = tour.pitch;
+      stage.classList.add("dragging");
+      stage.setPointerCapture(e.pointerId);
+    });
+
+    stage.addEventListener("pointermove", function (e) {
+      if (!tour.dragging || e.pointerId !== tour.pointerId) return;
+      var dx = e.clientX - tour.startX;
+      var dy = e.clientY - tour.startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        tour.moved = true;
+        els.tourHint.classList.add("hide");
+      }
+      tour.yaw = normalizeYaw(tour.startYaw - dx * YAW_PER_PX);
+      // Dragging the finger up (dy negative) should look up (pitch increases).
+      tour.pitch = Math.max(-80, Math.min(80, tour.startPitch - dy * PITCH_PER_PX));
+      updateTourView();
+    });
+
+    function endDrag(e) {
+      if (!tour.dragging || e.pointerId !== tour.pointerId) return;
+      tour.dragging = false;
+      stage.classList.remove("dragging");
+      if (!tour.moved) {
+        // A tap rather than a drag: open the full-size original photo.
+        openLightbox(tour.activeIndex);
+        return;
+      }
+      // Settle the view onto the exact angle of whichever shot is now
+      // active, so the framing looks deliberate rather than mid-drag.
+      var shot = state.shots[tour.activeIndex];
+      if (shot) { tour.yaw = shot.yaw; tour.pitch = shot.pitch || 0; }
+      updateTourView();
+    }
+    stage.addEventListener("pointerup", endDrag);
+    stage.addEventListener("pointercancel", endDrag);
+
+    els.btnViewPhotos.addEventListener("click", function () {
+      openLightbox(tour.activeIndex >= 0 ? tour.activeIndex : 0);
+    });
+  }
 
   function renderResults() {
-    els.resultsSub.textContent = "Se capturaron " + state.shots.length + " vistas del espacio.";
-    els.grid.innerHTML = "";
-    state.shots.forEach(function (shot, i) {
-      var cell = document.createElement("button");
-      cell.className = "cell";
-      cell.style.animationDelay = (i * 35) + "ms";
-      cell.innerHTML = '<img src="' + shot.dataUrl + '" alt="' + shot.instruction + '"><span class="n">' + (i + 1) + '</span>';
-      cell.addEventListener("click", function () { openLightbox(i); });
-      els.grid.appendChild(cell);
-    });
+    els.resultsSub.textContent = "Recorrido de " + state.shots.length + " vistas del espacio.";
+    tour.yaw = 0;
+    tour.pitch = 0;
+    tour.activeIndex = -1;
+    els.tourHint.classList.remove("hide");
+    buildTourDots();
+    bindTourEvents();
+    updateTourView();
   }
 
   var lbIndex = 0;
