@@ -1,0 +1,10 @@
+{
+  "name": "room-scan-app",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Escaneo guiado de habitaciones con la cámara del teléfono — app estática (HTML/CSS/JS, sin dependencias).",
+  "scripts": {
+    "build": "node build.js",
+    "start": "node build.js --serve"
+  }
+}

@@ -1,0 +1,1227 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="description" content="Escaneá tu habitación con la cámara de tu teléfono, recorriendo una guía paso a paso de 12 vistas.">
+<meta name="theme-color" content="#07070b">
+<title>Escaneo de Habitación</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07070b;
+    --stage-bg-1: #0c0b14;
+    --stage-bg-2: #05050a;
+    --surface: #121219;
+    --surface-2: #1a1a24;
+    --surface-3: #22222f;
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.16);
+    --text: #f3f2f8;
+    --text-dim: #9a97ab;
+    --text-faint: #605d70;
+    --accent: #8b7bff;
+    --accent-soft: rgba(139,123,255,0.16);
+    --accent-2: #46e0c6;
+    --good: #3ee0a0;
+    --warn: #ffb454;
+    --danger: #ff6b6b;
+    --font-display: "Unbounded", system-ui, sans-serif;
+    --font-body: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: var(--font-body);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button {
+    font-family: inherit;
+    color: inherit;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
+
+  /* ---------- Stage: ambient backdrop + phone frame (desktop preview) ---------- */
+
+  .stage {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 16px;
+    background:
+      radial-gradient(ellipse 900px 600px at 50% -10%, rgba(139,123,255,0.16), transparent 60%),
+      radial-gradient(ellipse 700px 500px at 100% 100%, rgba(70,224,198,0.08), transparent 60%),
+      linear-gradient(180deg, var(--stage-bg-1), var(--stage-bg-2));
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stage::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: 0.25;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 35%, black, transparent);
+    pointer-events: none;
+  }
+
+  .device {
+    position: relative;
+    width: 402px;
+    max-width: 100%;
+    height: 860px;
+    max-height: calc(100vh - 80px);
+    background: #000;
+    border-radius: 46px;
+    padding: 14px;
+    box-shadow:
+      0 0 0 2px rgba(255,255,255,0.06),
+      0 40px 100px -30px rgba(0,0,0,0.85),
+      0 0 120px -40px rgba(139,123,255,0.35);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .device::after {
+    content: "";
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 120px;
+    height: 26px;
+    background: #000;
+    border-radius: 0 0 18px 18px;
+    z-index: 40;
+  }
+
+  .screen {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: var(--bg);
+    border-radius: 32px;
+    overflow: hidden;
+  }
+
+  /* Full-bleed on real phones: drop the mockup frame entirely */
+  @media (max-width: 480px), (max-height: 760px) and (pointer: coarse) {
+    .stage { padding: 0; background: var(--bg); }
+    .stage::before { display: none; }
+    .device {
+      width: 100%;
+      height: 100dvh;
+      max-height: none;
+      border-radius: 0;
+      padding: 0;
+      box-shadow: none;
+    }
+    .device::after { display: none; }
+    .screen { border-radius: 0; }
+  }
+
+  /* ---------- Shared view layout ---------- */
+
+  .view {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    animation: view-in 0.4s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  .view.active { display: flex; }
+
+  @keyframes view-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .pad { padding: 0 24px; }
+  .safe-top { padding-top: max(22px, env(safe-area-inset-top)); }
+  .safe-bottom { padding-bottom: max(22px, env(safe-area-inset-bottom)); }
+
+  h1, h2 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+
+  .btn-primary, .btn-secondary {
+    width: 100%;
+    border: none;
+    border-radius: 18px;
+    padding: 17px 20px;
+    font-size: 14.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #fff, #e7e5f5);
+    color: #0a0a12;
+    box-shadow: 0 10px 30px -8px rgba(255,255,255,0.22);
+  }
+  .btn-secondary {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+  }
+  .btn-primary:active, .btn-secondary:active { transform: scale(0.97); }
+  .btn-primary:disabled, .btn-secondary:disabled { opacity: 0.5; pointer-events: none; }
+
+  .icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(10px);
+    cursor: pointer;
+  }
+  .icon-btn:active { background: rgba(0,0,0,0.6); }
+
+  /* ---------- Home ---------- */
+
+  #view-home .home-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 34px;
+    text-align: center;
+  }
+  .mark {
+    position: relative;
+    width: 92px;
+    height: 92px;
+    border-radius: 26px;
+    background: linear-gradient(155deg, var(--accent-soft), rgba(70,224,198,0.06));
+    border: 1px solid var(--border-strong);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .mark svg { width: 42px; height: 42px; color: var(--accent); }
+
+  #view-home h1 { font-size: 27px; line-height: 1.2; }
+  #view-home .sub { margin-top: 14px; font-size: 15px; line-height: 1.55; color: var(--text-dim); max-width: 27ch; }
+  #view-home .foot-note { text-align: center; font-size: 11.5px; color: var(--text-faint); margin-top: 12px; }
+
+  /* ---------- Instructions ---------- */
+
+  .tip-list { display: flex; flex-direction: column; gap: 10px; margin-top: 26px; }
+  .tip {
+    display: flex;
+    gap: 13px;
+    align-items: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px 15px;
+  }
+  .tip-num {
+    flex: none;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tip p { margin: 0; font-size: 13.8px; line-height: 1.45; color: #dedcea; }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+  }
+  .error-box {
+    margin-top: 16px;
+    background: rgba(255,107,107,0.1);
+    border: 1px solid rgba(255,107,107,0.25);
+    color: #ffb0b0;
+    border-radius: 14px;
+    padding: 12px 14px;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+
+  /* ---------- Camera / scan view ---------- */
+
+  #view-scan { background: #000; }
+  .camera-plane { position: absolute; inset: 0; overflow: hidden; background: #000; }
+  #video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  .demo-plane {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.8s ease;
+  }
+  .demo-badge {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    text-align: center; padding: 0 40px;
+  }
+  .demo-pill {
+    font-family: var(--font-mono);
+    font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--warn);
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,180,84,0.3);
+    padding: 6px 14px; border-radius: 999px;
+  }
+  .demo-badge p { margin: 0; font-size: 12.5px; color: rgba(255,255,255,0.4); max-width: 210px; line-height: 1.5; }
+  .blueprint { position: absolute; inset: 0; opacity: 0.12; }
+
+  .scan-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    pointer-events: none;
+  }
+  .scan-top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px;
+    pointer-events: auto;
+  }
+  .quality-badge {
+    display: flex; align-items: center; gap: 7px;
+    background: rgba(0,0,0,0.45);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(10px);
+    border-radius: 999px;
+    padding: 8px 13px 8px 11px;
+  }
+  .quality-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex: none; }
+  .quality-badge span { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+
+  .scan-progress { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 18px; }
+  .scan-progress .label {
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: rgba(255,255,255,0.55);
+  }
+  .scan-progress .count { font-size: 14px; font-weight: 700; }
+  .progress-track { width: 168px; height: 5px; border-radius: 999px; background: rgba(255,255,255,0.14); overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.45s cubic-bezier(0.16,1,0.3,1); }
+
+  .guide-wrap { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; }
+  .guide {
+    position: relative; width: 240px; height: 240px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .guide-ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.5);
+    transition: border-color 0.3s ease, transform 0.3s ease;
+  }
+  .guide.detected .guide-ring { border-color: rgba(62,224,160,0.9); }
+  .guide-pulse {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.22);
+    animation: pulse-ring 2.2s cubic-bezier(0.4,0,0.6,1) infinite;
+  }
+  .guide.detected .guide-pulse { display: none; }
+  @keyframes pulse-ring {
+    0% { transform: scale(0.92); opacity: 0.8; }
+    75%, 100% { transform: scale(1.18); opacity: 0; }
+  }
+  .tick { position: absolute; background: rgba(255,255,255,0.45); }
+  .tick.t { top: -2px; left: 50%; width: 1.5px; height: 26px; transform: translateX(-50%); }
+  .tick.b { bottom: -2px; left: 50%; width: 1.5px; height: 26px; transform: translateX(-50%); }
+  .tick.l { left: -2px; top: 50%; height: 1.5px; width: 26px; transform: translateY(-50%); }
+  .tick.r { right: -2px; top: 50%; height: 1.5px; width: 26px; transform: translateY(-50%); }
+
+  .detected-check {
+    display: none;
+    flex-direction: column; align-items: center; gap: 4px;
+    color: var(--good);
+    animation: check-pop 0.45s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+  .guide.detected .detected-check { display: flex; }
+  .detected-check svg { width: 34px; height: 34px; }
+  .detected-check span { font-size: 11.5px; font-weight: 700; }
+  @keyframes check-pop {
+    0% { transform: scale(0.5); opacity: 0; }
+    65% { transform: scale(1.14); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  .instruction-card {
+    align-self: center;
+    max-width: 300px;
+    margin: 0 20px;
+    text-align: center;
+    background: rgba(10,10,16,0.55);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(14px);
+    border-radius: 18px;
+    padding: 14px 20px;
+  }
+  .instruction-card h3 { margin: 0; font-family: var(--font-body); font-size: 16px; font-weight: 800; line-height: 1.35; }
+  .instruction-card p { margin: 4px 0 0; font-size: 12.3px; color: rgba(255,255,255,0.55); line-height: 1.4; }
+  .manual-tag { display: inline-block; margin-top: 8px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-2); }
+
+  .scan-bottom {
+    display: flex; align-items: center; justify-content: center; gap: 30px;
+    padding-top: 22px;
+    pointer-events: auto;
+  }
+  .thumb {
+    width: 54px; height: 54px; border-radius: 15px; overflow: hidden;
+    background: var(--surface-2); border: 1px solid var(--border-strong);
+    display: flex; align-items: center; justify-content: center;
+    flex: none;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .thumb.empty span { font-size: 9px; color: var(--text-faint); text-align: center; padding: 0 4px; }
+
+  .capture-btn {
+    position: relative;
+    width: 76px; height: 76px; border-radius: 50%;
+    background: none; border: none; cursor: pointer;
+    flex: none;
+  }
+  .capture-btn .ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid rgba(255,255,255,0.85); }
+  .capture-btn .core {
+    position: absolute; inset: 5px; border-radius: 50%; background: #fff;
+    transition: transform 0.12s ease;
+  }
+  .capture-btn:active .core { transform: scale(0.88); }
+  .spacer-54 { width: 54px; flex: none; }
+
+  .flash {
+    position: absolute; inset: 0; background: #fff; opacity: 0;
+    pointer-events: none;
+  }
+  .flash.go { animation: flash-out 0.4s ease-out forwards; }
+  @keyframes flash-out { 0% { opacity: 0.85; } 100% { opacity: 0; } }
+
+  .permission-overlay {
+    position: absolute; inset: 0;
+    display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; text-align: center; padding: 28px 30px;
+    background: rgba(4,4,8,0.95);
+    overflow-y: auto;
+  }
+  .permission-overlay.show { display: flex; }
+  .permission-icon {
+    width: 46px; height: 46px; border-radius: 50%; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-2); border: 1px solid var(--border-strong);
+    color: var(--warn);
+  }
+  .permission-icon svg { width: 22px; height: 22px; }
+  .permission-icon.err { color: var(--danger); background: rgba(255,107,107,0.1); border-color: rgba(255,107,107,0.28); }
+  #permission-title { margin: 0; font-family: var(--font-display); font-size: 15.5px; font-weight: 600; color: var(--text); }
+  .permission-overlay p { margin: 0; font-size: 13px; color: rgba(255,255,255,0.65); line-height: 1.55; max-width: 300px; }
+  .permission-code {
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em;
+    color: var(--text-faint); background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px;
+  }
+  .permission-actions { display: flex; flex-direction: column; gap: 9px; width: 100%; max-width: 280px; margin-top: 4px; }
+  .permission-overlay .btn-secondary, .permission-overlay .btn-ghost { width: 100%; max-width: 280px; }
+  .btn-ghost {
+    background: none; border: none; color: rgba(255,255,255,0.4);
+    font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 4px;
+  }
+
+  /* ---------- Complete ---------- */
+
+  #view-complete .complete-body {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 22px; text-align: center;
+  }
+  .check-circle {
+    width: 84px; height: 84px; border-radius: 50%;
+    background: rgba(62,224,160,0.14); border: 1px solid rgba(62,224,160,0.32);
+    display: flex; align-items: center; justify-content: center;
+    animation: check-pop 0.5s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+  .check-circle svg { width: 38px; height: 38px; color: var(--good); }
+  #view-complete h2 { font-size: 22px; }
+  #view-complete .sub { margin-top: 8px; font-size: 14.5px; color: var(--text-dim); max-width: 26ch; line-height: 1.5; }
+
+  /* ---------- Processing ---------- */
+
+  #view-processing .proc-body {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 30px; text-align: center; padding: 0 30px;
+  }
+  .spinner-wrap { position: relative; width: 88px; height: 88px; display: flex; align-items: center; justify-content: center; }
+  .spinner-ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2.5px solid rgba(255,255,255,0.08);
+    border-top-color: var(--accent);
+    animation: spin 1.1s linear infinite;
+  }
+  .spinner-wrap svg { width: 32px; height: 32px; color: var(--accent); position: relative; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #view-processing h2 { font-size: 19px; }
+  #view-processing .sub { margin-top: 4px; font-size: 13px; color: var(--text-faint); }
+
+  .stage-list { width: 100%; max-width: 280px; display: flex; flex-direction: column; gap: 9px; }
+  .stage-row {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 13px; padding: 12px 16px;
+    transition: background 0.3s ease, border-color 0.3s ease, opacity 0.3s ease;
+  }
+  .stage-row.active { background: var(--accent-soft); border-color: rgba(139,123,255,0.3); }
+  .stage-row.pending { opacity: 0.45; }
+  .stage-row span.name { font-size: 13px; color: #e5e3f0; }
+  .stage-row .status-dot { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.2); flex: none; }
+  .stage-row.active .status-dot { border: none; border-top: 2px solid var(--accent); background: none; animation: spin 0.8s linear infinite; }
+  .stage-row.done .status-dot { display: none; }
+  .check-mark { display: none; color: var(--good); font-weight: 800; }
+  .stage-row.done .check-mark { display: block; animation: check-pop 0.4s ease both; }
+  .proc-footer { font-size: 12px; color: var(--text-faint); }
+
+  /* ---------- Results ---------- */
+
+  #view-results .results-head { text-align: center; margin-top: 6px; }
+  #view-results h2 { font-size: 21px; }
+  #view-results .sub { margin-top: 6px; font-size: 13.5px; color: var(--text-dim); }
+  .results-scroll { flex: 1; overflow-y: auto; margin-top: 22px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    padding-bottom: 18px;
+  }
+  .cell {
+    position: relative; aspect-ratio: 1; border-radius: 13px; overflow: hidden;
+    background: var(--surface-2); border: 1px solid var(--border);
+    cursor: pointer; animation: cell-in 0.4s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  @keyframes cell-in { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+  .cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cell .n {
+    position: absolute; bottom: 4px; right: 4px;
+    background: rgba(0,0,0,0.6); color: #fff; font-size: 9.5px; font-weight: 700;
+    padding: 2px 5px; border-radius: 6px; font-family: var(--font-mono);
+  }
+  .results-actions { display: flex; flex-direction: column; gap: 10px; padding-bottom: 4px; }
+
+  .lightbox {
+    position: absolute; inset: 0; z-index: 60;
+    background: rgba(2,2,5,0.97);
+    display: none; flex-direction: column;
+  }
+  .lightbox.show { display: flex; }
+  .lb-top { display: flex; align-items: center; justify-content: space-between; padding: 0 18px; }
+  .lb-top span { font-size: 12.5px; color: var(--text-dim); font-family: var(--font-mono); }
+  .lb-img-wrap { flex: 1; display: flex; align-items: center; justify-content: center; padding: 18px; min-height: 0; }
+  .lb-img-wrap img { max-width: 100%; max-height: 100%; border-radius: 16px; object-fit: contain; }
+  .lb-bottom { display: flex; align-items: center; justify-content: space-between; padding: 0 18px; gap: 10px; }
+  .lb-nav {
+    background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text);
+    border-radius: 999px; padding: 10px 16px; font-size: 12.5px; font-weight: 600; cursor: pointer; flex: none;
+  }
+  .lb-nav:disabled { opacity: 0.3; }
+  .lb-caption { font-size: 12px; color: var(--text-dim); text-align: center; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="device">
+    <div class="screen">
+
+      <!-- 1. HOME -->
+      <div class="view active" id="view-home">
+        <div class="pad safe-top safe-bottom home-body">
+          <div class="mark">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 8V6a2 2 0 0 1 2-2h2M18 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M6 20H4a2 2 0 0 1-2-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <circle cx="12" cy="12" r="4.1" stroke="currentColor" stroke-width="1.6"/>
+              <circle cx="12" cy="12" r="1.1" fill="currentColor"/>
+            </svg>
+          </div>
+          <div>
+            <h1>Escaneá tu&nbsp;habitación</h1>
+            <p class="sub">Recorré el espacio con tu cámara y capturá diferentes ángulos para registrar la habitación.</p>
+          </div>
+        </div>
+        <div class="pad safe-bottom" style="padding-bottom:34px;">
+          <button class="btn-primary" id="btn-start">Comenzar escaneo</button>
+          <p class="foot-note">Funciona directamente desde el navegador</p>
+        </div>
+      </div>
+
+      <!-- 2. INSTRUCTIONS -->
+      <div class="view" id="view-instructions">
+        <div class="pad safe-top">
+          <button class="icon-btn" id="btn-back-home" aria-label="Volver" style="background:transparent;border:none;">
+            <svg viewBox="0 0 24 24" fill="none" width="20" height="20"><path d="M15 18l-6-6 6-6" stroke="rgba(255,255,255,0.6)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="pad" style="flex:1; overflow-y:auto;">
+          <span class="eyebrow">Antes de empezar</span>
+          <h2 style="font-size:22px; margin-top:6px;">Para obtener un buen escaneo</h2>
+          <div class="tip-list">
+            <div class="tip"><div class="tip-num">1</div><p>Recorré lentamente la habitación.</p></div>
+            <div class="tip"><div class="tip-num">2</div><p>Mostrá cada pared desde diferentes ángulos.</p></div>
+            <div class="tip"><div class="tip-num">3</div><p>Incluí puertas, ventanas y muebles.</p></div>
+            <div class="tip"><div class="tip-num">4</div><p>Intentá mantener una iluminación estable.</p></div>
+            <div class="tip"><div class="tip-num">5</div><p>Evitá movimientos bruscos.</p></div>
+          </div>
+          <div class="error-box" id="instr-error" style="display:none;"></div>
+        </div>
+        <div class="pad safe-bottom" style="padding-bottom:34px; padding-top: 14px;">
+          <button class="btn-primary" id="btn-init-camera">Iniciar cámara</button>
+          <p class="foot-note">Vamos a pedirte permiso para usar la cámara trasera</p>
+        </div>
+      </div>
+
+      <!-- 3. SCANNING -->
+      <div class="view" id="view-scan">
+        <div class="camera-plane">
+          <video id="video" autoplay muted playsinline></video>
+          <div class="demo-plane" id="demo-plane" style="display:none;">
+            <svg class="blueprint" viewBox="0 0 200 200" preserveAspectRatio="none">
+              <rect x="18" y="18" width="164" height="164" fill="none" stroke="white" stroke-width="0.6"/>
+              <line x1="18" y1="100" x2="182" y2="100" stroke="white" stroke-width="0.4"/>
+              <line x1="100" y1="18" x2="100" y2="182" stroke="white" stroke-width="0.4"/>
+            </svg>
+            <div class="demo-badge">
+              <span class="demo-pill">Modo demostración</span>
+              <p>No se detectó una cámara real. Estás recorriendo el flujo completo con una escena simulada.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flash" id="flash"></div>
+
+        <div class="scan-overlay">
+          <div class="scan-top safe-top">
+            <button class="icon-btn" id="btn-close-scan" aria-label="Cerrar escaneo">
+              <svg viewBox="0 0 24 24" fill="none" width="18" height="18"><path d="M6 6l12 12M18 6L6 18" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+            <div class="quality-badge" id="quality-badge">
+              <span class="quality-dot" id="quality-dot"></span>
+              <span id="quality-label">Analizando…</span>
+            </div>
+          </div>
+
+          <div class="scan-progress">
+            <span class="label">Escaneando habitación</span>
+            <span class="count" id="scan-count">Vista 1 de 12</span>
+            <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:8%;"></div></div>
+          </div>
+
+          <div class="guide-wrap">
+            <div class="guide" id="guide">
+              <div class="guide-pulse"></div>
+              <div class="guide-ring"></div>
+              <span class="tick t"></span><span class="tick b"></span><span class="tick l"></span><span class="tick r"></span>
+              <div class="detected-check">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Posición detectada</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="instruction-card">
+            <h3 id="step-instruction">Apuntá hacia la pared principal</h3>
+            <p id="step-detail">Intentá mostrar la mayor parte de la habitación</p>
+            <span class="manual-tag" id="manual-tag" style="display:none;">Modo manual · tocá capturar cuando estés listo</span>
+          </div>
+
+          <div class="scan-bottom safe-bottom">
+            <div class="thumb empty" id="thumb"><span>Sin capturas</span></div>
+            <button class="capture-btn" id="btn-capture" aria-label="Capturar vista">
+              <span class="ring"></span><span class="core"></span>
+            </button>
+            <div class="spacer-54"></div>
+          </div>
+        </div>
+
+        <div class="permission-overlay" id="permission-overlay">
+          <div class="permission-icon" id="permission-icon">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4m0 4h.01M10.3 3.86L1.82 18a1.5 1.5 0 0 0 1.3 2.25h17.76a1.5 1.5 0 0 0 1.3-2.25L13.7 3.86a1.5 1.5 0 0 0-2.6 0z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3 id="permission-title">Solicitando acceso a la cámara…</h3>
+          <p id="permission-text"></p>
+          <span class="permission-code" id="permission-code" style="display:none;"></span>
+
+          <div class="permission-actions">
+            <button class="btn-secondary" id="btn-retry-camera" style="display:none;">Reintentar</button>
+            <button class="btn-secondary" id="btn-demo-fallback" style="display:none;">Continuar en modo demostración</button>
+            <button class="btn-ghost" id="btn-exit-scan" style="display:none;">Volver</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. COMPLETE -->
+      <div class="view" id="view-complete">
+        <div class="pad safe-top safe-bottom complete-body">
+          <div class="check-circle">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div>
+            <h2>Escaneo completo</h2>
+            <p class="sub" id="complete-sub">Capturamos 12 vistas diferentes de tu habitación.</p>
+          </div>
+          <button class="btn-primary" id="btn-process" style="max-width:280px; margin-top:8px;">Procesar habitación</button>
+        </div>
+      </div>
+
+      <!-- 5. PROCESSING -->
+      <div class="view" id="view-processing">
+        <div class="pad safe-top safe-bottom proc-body">
+          <div class="spinner-wrap">
+            <div class="spinner-ring"></div>
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4.1" stroke="currentColor" stroke-width="1.6"/><path d="M4 8V6a2 2 0 0 1 2-2h2M18 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M6 20H4a2 2 0 0 1-2-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </div>
+          <div>
+            <h2>Analizando tu habitación</h2>
+            <p class="sub">Esto toma solo unos segundos</p>
+          </div>
+          <div class="stage-list" id="stage-list">
+            <div class="stage-row pending" data-stage="0">
+              <span class="name">Organizando capturas</span>
+              <span class="status-dot"></span><span class="check-mark">✓</span>
+            </div>
+            <div class="stage-row pending" data-stage="1">
+              <span class="name">Analizando diferentes ángulos</span>
+              <span class="status-dot"></span><span class="check-mark">✓</span>
+            </div>
+            <div class="stage-row pending" data-stage="2">
+              <span class="name">Reconociendo el espacio</span>
+              <span class="status-dot"></span><span class="check-mark">✓</span>
+            </div>
+          </div>
+          <p class="proc-footer">Preparando resultado…</p>
+        </div>
+      </div>
+
+      <!-- 6. RESULTS -->
+      <div class="view" id="view-results">
+        <div class="pad safe-top" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+          <div class="results-head">
+            <h2>Tu habitación fue escaneada</h2>
+            <p class="sub" id="results-sub">Se capturaron 12 vistas del espacio.</p>
+          </div>
+          <div class="results-scroll">
+            <div class="grid" id="grid"></div>
+          </div>
+        </div>
+        <div class="pad safe-bottom results-actions" style="padding-bottom:30px;">
+          <button class="btn-primary" id="btn-new-scan">Nuevo escaneo</button>
+          <button class="btn-secondary" id="btn-home">Volver al inicio</button>
+        </div>
+
+        <div class="lightbox" id="lightbox">
+          <div class="lb-top safe-top">
+            <span id="lb-position">Vista 1 de 12</span>
+            <button class="icon-btn" id="btn-lb-close"><svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="white" stroke-width="2" stroke-linecap="round"/></svg></button>
+          </div>
+          <div class="lb-img-wrap"><img id="lb-img" src="" alt=""></div>
+          <div class="lb-bottom safe-bottom">
+            <button class="lb-nav" id="lb-prev">‹ Anterior</button>
+            <span class="lb-caption" id="lb-caption"></span>
+            <button class="lb-nav" id="lb-next">Siguiente ›</button>
+          </div>
+        </div>
+      </div>
+
+      <canvas id="canvas" style="display:none;"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var scanSteps = [
+    { instruction: "Apuntá hacia la pared principal", detail: "Intentá mostrar la mayor parte de la habitación", targetYaw: 0 },
+    { instruction: "Girá lentamente hacia la derecha", detail: "Buscá una nueva perspectiva de la misma pared", targetYaw: 25 },
+    { instruction: "Mostrá la pared derecha", detail: "Recorré la pared completa, de arriba a abajo", targetYaw: 25 },
+    { instruction: "Mostrá la esquina derecha", detail: "Buscá el punto donde se unen las dos paredes", targetYaw: 20 },
+    { instruction: "Girá hacia la pared trasera", detail: "Encuadrá una vista amplia de la pared del fondo", targetYaw: 35 },
+    { instruction: "Mostrá la esquina izquierda", detail: "Ubicá la esquina opuesta a la anterior", targetYaw: 30 },
+    { instruction: "Mostrá la pared izquierda", detail: "Incluí puertas o ventanas si hay en esta pared", targetYaw: 25 },
+    { instruction: "Retrocedé un poco para una vista más amplia", detail: "Alejate un paso para captar el conjunto desde otro punto", targetYaw: 15 },
+    { instruction: "Apuntá hacia el techo", detail: "Inclinate hacia arriba para mostrar el techo", targetYaw: 0 },
+    { instruction: "Apuntá hacia el suelo", detail: "Inclinate hacia abajo para mostrar el piso", targetYaw: 0 },
+    { instruction: "Tomá una segunda vista panorámica", detail: "Girá describiendo un arco amplio por la habitación", targetYaw: 40 },
+    { instruction: "Mostrá una vista general final", detail: "Encuadrá la habitación completa una última vez", targetYaw: 20 }
+  ];
+  var TOTAL = scanSteps.length;
+
+  var state = {
+    stepIndex: 0,
+    shots: [],
+    demoMode: false,
+    cameraStatus: "idle", // idle | requesting | active | denied | unavailable
+    stream: null,
+    orientationGranted: false,
+    orientationBaseline: null,
+    movement: 0,
+    positionDetected: true
+  };
+
+  var els = {};
+  ["view-home","view-instructions","view-scan","view-complete","view-processing","view-results",
+   "btn-start","btn-back-home","btn-init-camera","instr-error",
+   "video","demo-plane","flash","btn-close-scan","quality-badge","quality-dot","quality-label",
+   "scan-count","progress-fill","guide","step-instruction","step-detail","manual-tag",
+   "thumb","btn-capture","permission-overlay","permission-icon","permission-title","permission-text","permission-code",
+   "btn-retry-camera","btn-demo-fallback","btn-exit-scan",
+   "complete-sub","btn-process","stage-list","results-sub","grid","btn-new-scan","btn-home",
+   "lightbox","lb-position","lb-img","lb-caption","lb-prev","lb-next","btn-lb-close","canvas"
+  ].forEach(function (id) { els[id.replace(/-([a-z])/g, function(_,c){return c.toUpperCase();})] = document.getElementById(id); });
+
+  function showView(name) {
+    ["home","instructions","scan","complete","processing","results"].forEach(function (v) {
+      document.getElementById("view-" + v).classList.toggle("active", v === name);
+    });
+  }
+
+  // ---------------- Home / Instructions navigation ----------------
+
+  els.btnStart.addEventListener("click", function () { showView("instructions"); });
+  els.btnBackHome.addEventListener("click", function () { showView("home"); });
+
+  els.btnInitCamera.addEventListener("click", function () {
+    els.instrError.style.display = "none";
+    // Both permission requests must be *initiated* synchronously inside this
+    // click handler — iOS Safari only shows its sensor-permission dialog when
+    // called directly from a user gesture, not from a later effect/timeout.
+    requestOrientationPermission();
+    startCamera();
+    showView("scan");
+  });
+
+  // ---------------- Orientation (DeviceOrientation API) ----------------
+
+  function requestOrientationPermission() {
+    try {
+      if (typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function") {
+        DeviceOrientationEvent.requestPermission().then(function (result) {
+          state.orientationGranted = result === "granted";
+        }).catch(function () { state.orientationGranted = false; });
+      } else if (typeof DeviceOrientationEvent !== "undefined") {
+        state.orientationGranted = true; // no explicit prompt required
+      }
+    } catch (e) {
+      state.orientationGranted = false;
+    }
+  }
+
+  var sawOrientationEvent = false;
+  window.addEventListener("deviceorientation", function (e) {
+    if (e.alpha === null && e.beta === null && e.gamma === null) return;
+    sawOrientationEvent = true;
+    var current = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
+    if (state.orientationBaseline) {
+      var a = state.orientationBaseline;
+      var dAlpha = Math.abs((current.alpha || 0) - (a.alpha || 0));
+      if (dAlpha > 180) dAlpha = 360 - dAlpha;
+      var dBeta = Math.abs((current.beta || 0) - (a.beta || 0));
+      var dGamma = Math.abs((current.gamma || 0) - (a.gamma || 0));
+      state.movement = Math.max(dAlpha, dBeta * 0.5, dGamma * 0.5);
+    }
+    state.lastOrientation = current;
+    updatePositionDetected();
+  });
+
+  function resetMovementBaseline() {
+    state.orientationBaseline = state.lastOrientation || null;
+    state.movement = 0;
+  }
+
+  function sensorsAvailable() {
+    return sawOrientationEvent && state.orientationGranted;
+  }
+
+  function updatePositionDetected() {
+    var step = scanSteps[state.stepIndex];
+    var detected;
+    if (!sensorsAvailable() || state.stepIndex === 0 || step.targetYaw === 0) {
+      detected = true;
+    } else {
+      detected = state.movement >= Math.min(10, step.targetYaw * 0.4);
+    }
+    state.positionDetected = detected;
+    els.guide.classList.toggle("detected", detected);
+  }
+
+  // ---------------- Camera ----------------
+
+  function isSecureContext() {
+    return typeof window.isSecureContext === "boolean" ? window.isSecureContext : location.protocol === "https:";
+  }
+
+  function resetPermissionUI() {
+    els.permissionOverlay.classList.add("show");
+    els.permissionIcon.classList.remove("err");
+    els.permissionCode.style.display = "none";
+    els.btnRetryCamera.style.display = "none";
+    els.btnDemoFallback.style.display = "none";
+    els.btnExitScan.style.display = "none";
+  }
+
+  function showPermissionMessage(opts) {
+    // opts: { title, text, code, showRetry, showDemo, showExit, isError }
+    els.permissionTitle.textContent = opts.title;
+    els.permissionText.textContent = opts.text;
+    if (opts.code) {
+      els.permissionCode.textContent = opts.code;
+      els.permissionCode.style.display = "";
+    }
+    if (opts.isError) els.permissionIcon.classList.add("err");
+    if (opts.showRetry) els.btnRetryCamera.style.display = "";
+    if (opts.showDemo) els.btnDemoFallback.style.display = "";
+    if (opts.showExit) els.btnExitScan.style.display = "";
+  }
+
+  function startCamera() {
+    state.cameraStatus = "requesting";
+    state.demoMode = false;
+    resetPermissionUI();
+    showPermissionMessage({ title: "Solicitando acceso a la cámara…", text: "Aceptá el permiso en el mensaje que te muestre el navegador." });
+    els.demoPlane.style.display = "none";
+    els.video.style.display = "";
+
+    if (!isSecureContext()) {
+      handleCameraError({ name: "SecurityError" });
+      return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      handleCameraError({ name: "Unsupported" });
+      return;
+    }
+
+    // 1) Prefer the rear camera.
+    requestStream({ video: { facingMode: { ideal: "environment" } }, audio: false })
+      .catch(function (firstErr) {
+        // NotAllowedError / SecurityError are permission or context problems,
+        // not constraint problems — retrying with looser constraints would
+        // just fail the same way, so report immediately.
+        if (firstErr.name === "NotAllowedError" || firstErr.name === "PermissionDeniedError" || firstErr.name === "SecurityError") {
+          return Promise.reject(firstErr);
+        }
+        // 2) Constraint-related (or unclear) failure — retry with the
+        // simplest possible request before giving up.
+        return requestStream({ video: true, audio: false }).catch(function () {
+          return Promise.reject(firstErr);
+        });
+      })
+      .then(function (stream) {
+        state.stream = stream;
+        els.video.srcObject = stream;
+        els.video.play().catch(function () {});
+        state.cameraStatus = "active";
+        els.permissionOverlay.classList.remove("show");
+        startQualityLoop();
+      })
+      .catch(function (err) {
+        handleCameraError(err);
+      });
+  }
+
+  function requestStream(constraints) {
+    return navigator.mediaDevices.getUserMedia(constraints);
+  }
+
+  function handleCameraError(err) {
+    state.cameraStatus = "denied";
+    var name = err && err.name;
+    var base = { showRetry: true, showDemo: true, showExit: true, isError: true, code: name || undefined };
+
+    if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+      showPermissionMessage(Object.assign({}, base, {
+        title: "Permiso de cámara denegado",
+        text: "Denegaste el permiso de cámara. Para habilitarlo: tocá el ícono de candado o de información junto a la dirección del sitio, buscá “Cámara” y cambialo a “Permitir”. Después volvé a intentar."
+      }));
+    } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+      showPermissionMessage(Object.assign({}, base, {
+        title: "No encontramos una cámara",
+        text: "Este dispositivo no tiene una cámara disponible, o ninguna cámara pudo activarse con los parámetros solicitados."
+      }));
+    } else if (name === "NotReadableError" || name === "TrackStartError") {
+      showPermissionMessage(Object.assign({}, base, {
+        title: "La cámara está en uso",
+        text: "Otra aplicación o pestaña está usando la cámara ahora mismo. Cerrala (por ejemplo otra pestaña con videollamada o cámara abierta) e intentá de nuevo."
+      }));
+    } else if (name === "SecurityError") {
+      showPermissionMessage(Object.assign({}, base, {
+        title: "Se necesita una conexión segura",
+        text: isSecureContext()
+          ? "El navegador bloqueó el acceso a la cámara por una restricción de seguridad de este sitio."
+          : "El acceso a la cámara solo funciona sobre HTTPS (o en localhost). Esta página se está sirviendo sin una conexión segura."
+      }));
+    } else if (name === "Unsupported") {
+      showPermissionMessage(Object.assign({}, base, {
+        title: "La cámara no está disponible aquí",
+        text: "Este navegador no expone la API de cámara. Probá con otro navegador (Chrome o Safari actualizados)."
+      }));
+    } else if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+      showPermissionMessage(Object.assign({}, base, {
+        title: "No pudimos configurar la cámara",
+        text: "La cámara del dispositivo no admite los parámetros solicitados."
+      }));
+    } else {
+      showPermissionMessage(Object.assign({}, base, {
+        title: "No pudimos activar la cámara",
+        text: "Ocurrió un error inesperado (" + (name || "desconocido") + "). Podés reintentar o seguir en modo demostración."
+      }));
+    }
+  }
+
+  function enterDemoMode() {
+    state.demoMode = true;
+    state.cameraStatus = "unavailable";
+    els.permissionOverlay.classList.remove("show");
+    els.video.style.display = "none";
+    els.demoPlane.style.display = "flex";
+    updateDemoBackdrop();
+  }
+
+  els.btnRetryCamera.addEventListener("click", startCamera);
+  els.btnDemoFallback.addEventListener("click", function () { enterDemoMode(); });
+  els.btnExitScan.addEventListener("click", function () { exitScan(); });
+
+  function updateDemoBackdrop() {
+    var hue = 220 + state.stepIndex * 9;
+    els.demoPlane.style.background = "radial-gradient(circle at 50% 42%, hsl(" + hue + " 42% 20%), #05050a 72%)";
+  }
+
+  var qualityInterval = null;
+  function startQualityLoop() {
+    if (qualityInterval) clearInterval(qualityInterval);
+    var c = document.createElement("canvas");
+    var ctx = c.getContext("2d", { willReadFrequently: true });
+    qualityInterval = setInterval(function () {
+      if (state.cameraStatus !== "active" || els.video.videoWidth === 0) return;
+      c.width = 48; c.height = 48;
+      ctx.drawImage(els.video, 0, 0, 48, 48);
+      setQuality(analyzeQuality(ctx, 48, 48, state.movement));
+    }, 700);
+  }
+
+  function analyzeQuality(ctx, w, h, movement) {
+    if (movement > 18) return "unstable";
+    try {
+      var data = ctx.getImageData(0, 0, w, h).data;
+      var total = 0, count = 0;
+      for (var i = 0; i < data.length; i += 16) {
+        total += (data[i] + data[i+1] + data[i+2]) / 3;
+        count++;
+      }
+      var avg = count ? total / count : 128;
+      if (avg < 55) return "dark";
+      return "good";
+    } catch (e) {
+      return "unknown";
+    }
+  }
+
+  var qualityConfig = {
+    good: { label: "Buena captura", color: "var(--good)" },
+    unstable: { label: "Mantené el teléfono más estable", color: "var(--warn)" },
+    dark: { label: "Poca iluminación", color: "var(--danger)" },
+    unknown: { label: "Analizando…", color: "var(--text-faint)" }
+  };
+  function setQuality(status) {
+    var cfg = qualityConfig[status] || qualityConfig.unknown;
+    els.qualityLabel.textContent = cfg.label;
+    els.qualityDot.style.background = cfg.color;
+  }
+
+  // ---------------- Scan step rendering ----------------
+
+  function renderStep() {
+    var step = scanSteps[state.stepIndex];
+    els.stepInstruction.textContent = step.instruction;
+    els.stepDetail.textContent = step.detail;
+    els.scanCount.textContent = "Vista " + (state.stepIndex + 1) + " de " + TOTAL;
+    els.progressFill.style.width = Math.round(((state.stepIndex) / TOTAL) * 100 + 8) + "%";
+    els.manualTag.style.display = sensorsAvailable() ? "none" : "inline-block";
+    updateDemoBackdrop();
+    updatePositionDetected();
+  }
+
+  function captureFrame() {
+    var canvas = els.canvas;
+    var useDemo = state.demoMode || state.cameraStatus !== "active" || !els.video.videoWidth;
+    if (useDemo) {
+      var size = 640;
+      canvas.width = size; canvas.height = size;
+      var ctx = canvas.getContext("2d");
+      var hue = 220 + state.stepIndex * 9;
+      var g = ctx.createRadialGradient(size/2, size/2, 40, size/2, size/2, size/1.3);
+      g.addColorStop(0, "hsl(" + hue + " 45% 26%)");
+      g.addColorStop(1, "#05050a");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.font = "600 22px Manrope, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Vista " + (state.stepIndex + 1) + " · Demo", size/2, size/2);
+      return { dataUrl: canvas.toDataURL("image/jpeg", 0.85), quality: "unknown" };
+    }
+    canvas.width = els.video.videoWidth;
+    canvas.height = els.video.videoHeight;
+    var ctx2 = canvas.getContext("2d", { willReadFrequently: true });
+    ctx2.drawImage(els.video, 0, 0, canvas.width, canvas.height);
+    var q = analyzeQuality(ctx2, canvas.width, canvas.height, state.movement);
+    return { dataUrl: canvas.toDataURL("image/jpeg", 0.85), quality: q };
+  }
+
+  els.btnCapture.addEventListener("click", function () {
+    var result = captureFrame();
+    var step = scanSteps[state.stepIndex];
+    state.shots.push({ instruction: step.instruction, dataUrl: result.dataUrl, quality: result.quality });
+
+    els.flash.classList.remove("go"); void els.flash.offsetWidth; els.flash.classList.add("go");
+    els.thumb.classList.remove("empty");
+    els.thumb.innerHTML = '<img src="' + result.dataUrl + '" alt="Última captura">';
+
+    resetMovementBaseline();
+
+    if (state.shots.length >= TOTAL) {
+      setTimeout(finishScan, 320);
+      return;
+    }
+    state.stepIndex++;
+    renderStep();
+  });
+
+  els.btnCloseScan.addEventListener("click", exitScan);
+
+  function exitScan() {
+    stopCamera();
+    resetAll();
+    showView("home");
+  }
+
+  function stopCamera() {
+    if (state.stream) {
+      state.stream.getTracks().forEach(function (t) { t.stop(); });
+      state.stream = null;
+    }
+    els.video.srcObject = null;
+    state.cameraStatus = "idle";
+    if (qualityInterval) { clearInterval(qualityInterval); qualityInterval = null; }
+  }
+
+  function resetAll() {
+    state.stepIndex = 0;
+    state.shots = [];
+    state.demoMode = false;
+    els.thumb.classList.add("empty");
+    els.thumb.innerHTML = "<span>Sin capturas</span>";
+  }
+
+  function finishScan() {
+    stopCamera();
+    els.completeSub.textContent = "Capturamos " + state.shots.length + " vistas diferentes de tu habitación.";
+    showView("complete");
+  }
+
+  // ---------------- Processing ----------------
+
+  els.btnProcess.addEventListener("click", function () {
+    showView("processing");
+    var rows = els.stageList.querySelectorAll(".stage-row");
+    rows.forEach(function (r) { r.classList.remove("active","done"); r.classList.add("pending"); });
+    rows.forEach(function (row, i) {
+      setTimeout(function () {
+        rows.forEach(function(r){ r.classList.remove("active"); });
+        row.classList.remove("pending");
+        row.classList.add("active");
+      }, 750 * i + 150);
+      setTimeout(function () {
+        row.classList.remove("active");
+        row.classList.add("done");
+      }, 750 * (i + 1));
+    });
+    setTimeout(function () {
+      renderResults();
+      showView("results");
+    }, 750 * rows.length + 650);
+  });
+
+  // ---------------- Results ----------------
+
+  function renderResults() {
+    els.resultsSub.textContent = "Se capturaron " + state.shots.length + " vistas del espacio.";
+    els.grid.innerHTML = "";
+    state.shots.forEach(function (shot, i) {
+      var cell = document.createElement("button");
+      cell.className = "cell";
+      cell.style.animationDelay = (i * 35) + "ms";
+      cell.innerHTML = '<img src="' + shot.dataUrl + '" alt="' + shot.instruction + '"><span class="n">' + (i + 1) + '</span>';
+      cell.addEventListener("click", function () { openLightbox(i); });
+      els.grid.appendChild(cell);
+    });
+  }
+
+  var lbIndex = 0;
+  function openLightbox(i) {
+    lbIndex = i;
+    renderLightbox();
+    els.lightbox.classList.add("show");
+  }
+  function renderLightbox() {
+    var shot = state.shots[lbIndex];
+    els.lbImg.src = shot.dataUrl;
+    els.lbPosition.textContent = "Vista " + (lbIndex + 1) + " de " + state.shots.length;
+    els.lbCaption.textContent = shot.instruction;
+    els.lbPrev.disabled = lbIndex === 0;
+    els.lbNext.disabled = lbIndex === state.shots.length - 1;
+  }
+  els.btnLbClose.addEventListener("click", function () { els.lightbox.classList.remove("show"); });
+  els.lbPrev.addEventListener("click", function () { if (lbIndex > 0) { lbIndex--; renderLightbox(); } });
+  els.lbNext.addEventListener("click", function () { if (lbIndex < state.shots.length - 1) { lbIndex++; renderLightbox(); } });
+
+  els.btnNewScan.addEventListener("click", function () {
+    resetAll();
+    showView("instructions");
+  });
+  els.btnHome.addEventListener("click", function () {
+    resetAll();
+    showView("home");
+  });
+
+  // Initial render
+  renderStep();
+})();
+</script>
+</body>
+</html>
