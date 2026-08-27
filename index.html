@@ -331,12 +331,13 @@
   .progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.45s cubic-bezier(0.16,1,0.3,1); }
 
   /*
-   * Capture guide — modeled on a reference scanning app: a fixed rectangular
-   * frame with a fixed circular indicator at its exact center (it never
-   * moves — only its fill changes as you approach the target), and a handful
-   * of green "compass" dots arranged around the frame showing roughly where
-   * the next pending targets are, relative to which way you're facing right
-   * now. Nothing here travels from the edge to the center.
+   * Capture guide: a fixed rectangular frame with a fixed circular indicator
+   * at its exact center (it never moves — only its fill changes as you get
+   * closer), and ONE green target dot showing the real direction of the
+   * current target relative to which way you're facing right now. Nothing
+   * here travels from the edge to the center, and nothing captures on its
+   * own — reaching alignment only changes what's on screen; the shutter
+   * button is what actually takes the picture.
    */
   .guide-wrap { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; }
   .guide { position: relative; width: 250px; height: 340px; }
@@ -347,18 +348,20 @@
     border-radius: 4px;
   }
 
-  /* The compass dots: a small pool of reusable nodes repositioned by JS
-     around an ellipse just outside the frame, one per nearby pending target. */
+  /* The single target dot: repositioned by JS on an ellipse just outside the
+     frame, at the real bearing to the ONE current target — never several at
+     once, never eased toward the center. Only its position (and, once
+     aligned, its color) change. */
   .compass-dot {
-    position: absolute; left: 50%; top: 50%; width: 20px; height: 20px;
-    margin: -10px 0 0 -10px; border-radius: 50%;
+    position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+    margin: -11px 0 0 -11px; border-radius: 50%;
     background: var(--good);
     box-shadow: 0 0 10px rgba(62,224,160,0.65);
     opacity: 0; transform: translate(0, 0) scale(0.6);
-    transition: transform 0.28s cubic-bezier(0.22,1,0.36,1), opacity 0.28s ease;
+    transition: transform 0.28s cubic-bezier(0.22,1,0.36,1), opacity 0.28s ease, background 0.2s ease;
   }
   .compass-dot.show { opacity: 1; transform: translate(var(--dx), var(--dy)) scale(1); }
-  .compass-dot.current { background: var(--accent-2); box-shadow: 0 0 14px rgba(70,224,198,0.75); }
+  .guide.aligned .compass-dot { background: var(--accent-2); box-shadow: 0 0 16px rgba(70,224,198,0.85); }
 
   /* The fixed central indicator: a static ring + a pie-style radial fill
      (conic-gradient) that grows as the live orientation approaches the
@@ -452,8 +455,8 @@
     transition: transform 0.12s ease, background 0.2s ease;
   }
   .capture-btn:active .core { transform: scale(0.88); }
-  /* Highlighted once the aim target locks onto the current step — capture
-     stays tappable the whole time, this is only a visual cue. */
+  /* Highlighted once the target dot is aligned — purely a visual cue, the
+     button is tappable the whole time either way; it never fires itself. */
   .capture-btn.ready { transform: scale(1.08); }
   .capture-btn.ready .ring { border-color: var(--good); box-shadow: 0 0 0 6px rgba(62,224,160,0.2); }
   .capture-btn.ready .core { background: var(--good); }
@@ -751,9 +754,6 @@
                    around the frame to show where the next few pending
                    targets are, relative to where the phone is pointed now. -->
               <div class="compass-dot" id="dot-a"></div>
-              <div class="compass-dot" id="dot-b"></div>
-              <div class="compass-dot" id="dot-c"></div>
-              <div class="compass-dot" id="dot-d"></div>
 
               <!-- Fixed central indicator: never moves, only its fill and
                    state change as the live orientation nears the target. -->
@@ -903,29 +903,33 @@
 (function () {
   "use strict";
 
-  // Spatial capture sequence: 16 positions forming one full horizontal turn
-  // on the spot, 22.5° apart. Pitch is 0 for all of them for now — ceiling/
-  // floor/other tilts are a deliberately separate follow-up, not part of
-  // this ring. yaw/pitch here double as the FALLBACK angle used when device
-  // sensors aren't available; when they are, the real measured orientation
-  // is stored per shot instead (see captureOrientation()).
-  var RING_COUNT = 16;
-  var COMPASS_NAMES = ["Frente", "Frente-derecha", "Derecha", "Fondo-derecha", "Fondo", "Fondo-izquierda", "Izquierda", "Frente-izquierda"];
+  // Spatial capture sequence: one full horizontal turn on the spot, visited
+  // in the order a person actually walks through a room — the 4 main walls
+  // first, then the 4 corners, then the 8 in-between positions needed to
+  // close the full 360°. Pitch is 0 for all of them for now — ceiling/floor
+  // are a deliberate, separate follow-up, not part of this ring. yaw/pitch
+  // here double as the FALLBACK angle used when device sensors aren't
+  // available; when they are, the real measured orientation is stored per
+  // shot instead (see captureOrientation()).
+  var COMPASS_NAMES = ["Frente", "Frente-derecha", "Derecha", "Atrás-derecha", "Atrás", "Atrás-izquierda", "Izquierda", "Frente-izquierda"];
   function compassName(yaw) {
     return COMPASS_NAMES[Math.round(yaw / 45) % 8];
   }
-  var scanSteps = [];
-  for (var s = 0; s < RING_COUNT; s++) {
-    var yawDeg = Math.round(s * (360 / RING_COUNT) * 10) / 10; // 22.5° steps
-    scanSteps.push({
-      id: s + 1,
+  var SEQUENCE_YAWS = [
+    0, 90, 180, 270,        // 1-4:  main walls — frente, derecha, atrás, izquierda
+    45, 135, 225, 315,      // 5-8:  corners — frente-derecha, atrás-derecha, atrás-izquierda, frente-izquierda
+    22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5, 337.5 // 9-16: fill in the rest of the 360°
+  ];
+  var scanSteps = SEQUENCE_YAWS.map(function (yawDeg, i) {
+    return {
+      id: i + 1,
       instruction: compassName(yawDeg),
       detail: yawDeg + "°",
       yaw: yawDeg,
       pitch: 0,
       kind: "ring"
-    });
-  }
+    };
+  });
   var TOTAL = scanSteps.length;
 
   function angleDiff(a, b) {
@@ -944,29 +948,23 @@
     yawCalibration: null,
     movement: 0,
     positionDetected: true,
-    // Smoothed live orientation (relative to calibration) — every dot's
-    // position and the center fill are derived from this single smoothed
-    // value, so they all move together and stay continuous, not jumpy.
+    // Smoothed live orientation (relative to calibration) — the single
+    // target dot's position and the center fill are both derived from this
+    // one smoothed value, so they move together and stay continuous.
     smoothYaw: 0,
     smoothPitch: 0,
     smoothInit: false,
-    autoCaptureTimer: null,
     capturing: false
   };
 
   // How close the live orientation needs to be to the current target to
-  // count as "aligned" (center fills solid, auto-capture arms).
+  // count as "aligned" (center fills solid, "✓ Posición correcta").
   var ALIGN_TOLERANCE_DEG = 12;
-  // The fill starts growing once within this many degrees of the target.
+  // The center ring starts filling once within this many degrees of target.
   var APPROACH_RANGE_DEG = 55;
   // Smoothing factor for the live orientation reading (0-1, higher = snappier).
   var ORIENTATION_SMOOTHING = 0.25;
-  // How long the orientation has to stay aligned before it auto-captures —
-  // avoids firing on a brief, noisy pass-through of the target.
-  var AUTO_CAPTURE_HOLD_MS = 380;
-  // How many upcoming targets (current + next N) get a compass dot.
-  var VISIBLE_DOTS = 4;
-  // Ellipse the compass dots sit on, just outside the capture frame.
+  // Ellipse the single target dot sits on, just outside the capture frame.
   var DOT_RADIUS_X = 150;
   var DOT_RADIUS_Y = 195;
 
@@ -974,7 +972,7 @@
   ["view-home","view-instructions","view-scan","view-complete","view-processing","view-results",
    "btn-start","btn-back-home","btn-init-camera","instr-error",
    "video","demo-plane","flash","btn-close-scan","quality-badge","quality-dot","quality-label",
-   "scan-count","progress-fill","guide","dot-a","dot-b","dot-c","dot-d","center-fill","step-instruction","step-detail","manual-tag",
+   "scan-count","progress-fill","guide","dot-a","center-fill","step-instruction","step-detail","manual-tag",
    "thumb","btn-capture","permission-overlay","permission-icon","permission-title","permission-text","permission-code",
    "btn-retry-camera","btn-demo-fallback","btn-exit-scan",
    "complete-sub","btn-process","stage-list","results-sub","btn-new-scan","btn-home",
@@ -1065,29 +1063,21 @@
     return { yaw: yaw, pitch: pitch };
   }
 
-  function clearAutoCaptureTimer() {
-    if (state.autoCaptureTimer) {
-      window.clearTimeout(state.autoCaptureTimer);
-      state.autoCaptureTimer = null;
-    }
-  }
-
   // The master per-tick update: smooths the phone's live orientation (so
-  // every visual below moves together and continuously, never in steps),
-  // fills the FIXED center indicator based on how close that is to the
-  // current target, positions a handful of compass dots for the upcoming
-  // targets around the FIXED frame, and arms auto-capture once aligned.
-  // Nothing on screen travels from the edge to the center — only the
-  // center's fill level and the dots' presence/position change.
+  // the target dot and the center fill both move continuously, never in
+  // steps), fills the FIXED center ring based on how close that is to the
+  // CURRENT target only, and places a SINGLE dot on a fixed ellipse around
+  // the frame at the real bearing to that target. Nothing here captures on
+  // its own — reaching "aligned" only changes what's on screen (✓ + a
+  // highlighted button); the person still has to press the shutter.
   function updateCaptureGuide() {
     var raw = sensorsAvailable() ? liveOrientation() : null;
 
     if (!raw) {
       // Manual fallback: no real orientation to guide with. Frame + a plain
       // neutral pulse (see .manual-mode in CSS); capture is always ready.
-      clearAutoCaptureTimer();
       els.centerFill.style.setProperty("--pct", "0");
-      [els.dotA, els.dotB, els.dotC, els.dotD].forEach(function (d) { d.classList.remove("show"); });
+      els.dotA.classList.remove("show");
       setAligned(true);
       return;
     }
@@ -1108,55 +1098,24 @@
 
     var pct = Math.max(0, Math.min(1, (APPROACH_RANGE_DEG - angularDist) / (APPROACH_RANGE_DEG - ALIGN_TOLERANCE_DEG)));
     els.centerFill.style.setProperty("--pct", String(Math.round(pct * 100)));
+    setAligned(angularDist <= ALIGN_TOLERANCE_DEG);
 
-    var aligned = angularDist <= ALIGN_TOLERANCE_DEG;
-    setAligned(aligned);
-
-    if (aligned) {
-      if (!state.autoCaptureTimer && !state.capturing) {
-        state.autoCaptureTimer = window.setTimeout(function () {
-          state.autoCaptureTimer = null;
-          if (state.positionDetected && !state.capturing) performCapture();
-        }, AUTO_CAPTURE_HOLD_MS);
-      }
-    } else {
-      clearAutoCaptureTimer();
-    }
-
-    positionCompassDots();
+    // Single target dot, positioned by real bearing (0° = straight ahead,
+    // rotates around the frame as you turn) — it never approaches the
+    // center; only the fixed center ring's fill communicates proximity.
+    var bearing = normalizeYaw(target.yaw - state.smoothYaw);
+    var rad = (bearing * Math.PI) / 180;
+    var dx = Math.sin(rad) * DOT_RADIUS_X;
+    var dy = -Math.cos(rad) * DOT_RADIUS_Y;
+    els.dotA.style.setProperty("--dx", dx.toFixed(1) + "px");
+    els.dotA.style.setProperty("--dy", dy.toFixed(1) + "px");
+    els.dotA.classList.add("show");
   }
 
   function setAligned(aligned) {
     state.positionDetected = aligned;
     els.guide.classList.toggle("aligned", aligned);
     els.btnCapture.classList.toggle("ready", aligned);
-  }
-
-  // Places up to VISIBLE_DOTS green dots on a fixed ellipse around the
-  // frame — one per upcoming target (current one first) — at the bearing
-  // from the phone's current smoothed heading to that target. As you turn,
-  // the whole small constellation rotates together; nothing eases toward
-  // the center, dots only appear/disappear and slide along the ellipse.
-  var dotEls = null;
-  function positionCompassDots() {
-    if (!dotEls) dotEls = [els.dotA, els.dotB, els.dotC, els.dotD];
-    for (var i = 0; i < dotEls.length; i++) {
-      var idx = state.stepIndex + i;
-      var dot = dotEls[i];
-      if (i >= VISIBLE_DOTS || idx >= TOTAL) {
-        dot.classList.remove("show");
-        continue;
-      }
-      var target = scanSteps[idx];
-      var bearing = normalizeYaw(target.yaw - state.smoothYaw); // 0 = straight ahead
-      var rad = (bearing * Math.PI) / 180;
-      var dx = Math.sin(rad) * DOT_RADIUS_X;
-      var dy = -Math.cos(rad) * DOT_RADIUS_Y;
-      dot.style.setProperty("--dx", dx.toFixed(1) + "px");
-      dot.style.setProperty("--dy", dy.toFixed(1) + "px");
-      dot.classList.add("show");
-      dot.classList.toggle("current", i === 0);
-    }
   }
 
   // ---------------- Camera ----------------
@@ -1403,12 +1362,12 @@
     return { yaw: step.yaw, pitch: step.pitch, source: "fallback" };
   }
 
-  // Shared by the manual capture button and by auto-capture once the
-  // center indicator locks onto the current target — same effect either way.
+  // Always triggered manually — the button, never the alignment state.
+  // Reaching "aligned" only changes the visuals (✓ + highlighted button);
+  // the person still has to tap to actually take the picture.
   function performCapture() {
-    if (state.capturing) return;
+    if (state.capturing) return; // guards against a double-fire from one tap
     state.capturing = true;
-    clearAutoCaptureTimer();
 
     var result = captureFrame();
     var step = scanSteps[state.stepIndex];
@@ -1438,8 +1397,6 @@
     }
     state.stepIndex++;
     renderStep();
-    // Small guard window so a lingering auto-capture timer or an eager tap
-    // right after advancing can't immediately fire a second capture.
     window.setTimeout(function () { state.capturing = false; }, 250);
   }
 
@@ -1454,7 +1411,6 @@
   }
 
   function stopCamera() {
-    clearAutoCaptureTimer();
     if (state.stream) {
       state.stream.getTracks().forEach(function (t) { t.stop(); });
       state.stream = null;
@@ -1465,7 +1421,6 @@
   }
 
   function resetAll() {
-    clearAutoCaptureTimer();
     state.stepIndex = 0;
     state.shots = [];
     state.demoMode = false;
