@@ -330,6 +330,34 @@
   .progress-track { width: 168px; height: 5px; border-radius: 999px; background: rgba(255,255,255,0.14); overflow: hidden; }
   .progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.45s cubic-bezier(0.16,1,0.3,1); }
 
+  /* 12-point sequence tracker: ○ pending · ◉ current · ✓ completed */
+  .step-dots {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    margin-top: 10px; flex-wrap: wrap; max-width: 260px;
+  }
+  .step-dot {
+    position: relative; width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.35); background: transparent;
+    transition: all 0.25s ease;
+  }
+  .step-dot.active {
+    width: 11px; height: 11px; background: var(--accent-2);
+    border-color: var(--accent-2);
+    box-shadow: 0 0 0 4px rgba(70,224,198,0.22);
+    animation: dot-pulse 1.6s ease-in-out infinite;
+  }
+  .step-dot.done {
+    background: var(--good); border-color: var(--good);
+  }
+  .step-dot.done::after {
+    content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 7px; font-weight: 800; color: #04140c; line-height: 1;
+  }
+  @keyframes dot-pulse {
+    0%, 100% { box-shadow: 0 0 0 4px rgba(70,224,198,0.22); }
+    50% { box-shadow: 0 0 0 7px rgba(70,224,198,0.08); }
+  }
+
   .guide-wrap { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; }
   .guide {
     position: relative; width: 240px; height: 240px;
@@ -337,10 +365,10 @@
   }
   .guide-ring {
     position: absolute; inset: 0; border-radius: 50%;
-    border: 2px solid rgba(255,255,255,0.5);
+    border: 2px dashed rgba(255,255,255,0.35);
     transition: border-color 0.3s ease, transform 0.3s ease;
   }
-  .guide.detected .guide-ring { border-color: rgba(62,224,160,0.9); }
+  .guide.detected .guide-ring { border-color: rgba(62,224,160,0.9); border-style: solid; }
   .guide-pulse {
     position: absolute; inset: 0; border-radius: 50%;
     border: 2px solid rgba(255,255,255,0.22);
@@ -356,6 +384,29 @@
   .tick.b { bottom: -2px; left: 50%; width: 1.5px; height: 26px; transform: translateX(-50%); }
   .tick.l { left: -2px; top: 50%; height: 1.5px; width: 26px; transform: translateY(-50%); }
   .tick.r { right: -2px; top: 50%; height: 1.5px; width: 26px; transform: translateY(-50%); }
+
+  /* The live aim target: it moves as the phone's real orientation changes,
+     closing in on the center as it approaches the current step's yaw/pitch.
+     A short transform transition (rather than a hard jump) keeps the motion
+     feeling continuous even though updates arrive as discrete sensor ticks. */
+  .aim-target {
+    position: absolute; left: 50%; top: 50%; width: 34px; height: 34px;
+    margin: -17px 0 0 -17px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.9), rgba(255,255,255,0.35) 60%, transparent 75%);
+    border: 2px solid #fff;
+    box-shadow: 0 0 16px rgba(255,255,255,0.45);
+    transition: transform 0.14s ease-out, opacity 0.2s ease;
+    will-change: transform;
+  }
+  .guide.detected .aim-target { opacity: 0; }
+  .aim-target .chevron {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+  }
+  .aim-target.at-edge .chevron { display: flex; }
+  .aim-target .chevron svg { width: 16px; height: 16px; color: #fff; }
+  .manual-mode .aim-target { display: none; }
 
   .detected-check {
     display: none;
@@ -374,17 +425,17 @@
 
   .instruction-card {
     align-self: center;
-    max-width: 300px;
+    max-width: 280px;
     margin: 0 20px;
     text-align: center;
-    background: rgba(10,10,16,0.55);
+    background: rgba(10,10,16,0.5);
     border: 1px solid var(--border);
     backdrop-filter: blur(14px);
-    border-radius: 18px;
-    padding: 14px 20px;
+    border-radius: 16px;
+    padding: 9px 18px;
   }
-  .instruction-card h3 { margin: 0; font-family: var(--font-body); font-size: 16px; font-weight: 800; line-height: 1.35; }
-  .instruction-card p { margin: 4px 0 0; font-size: 12.3px; color: rgba(255,255,255,0.55); line-height: 1.4; }
+  .instruction-card h3 { margin: 0; font-family: var(--font-body); font-size: 12.5px; font-weight: 600; line-height: 1.35; color: rgba(255,255,255,0.85); }
+  .instruction-card p { margin: 2px 0 0; font-size: 11px; color: rgba(255,255,255,0.45); line-height: 1.4; }
   .manual-tag { display: inline-block; margin-top: 8px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-2); }
 
   .scan-bottom {
@@ -406,13 +457,22 @@
     width: 76px; height: 76px; border-radius: 50%;
     background: none; border: none; cursor: pointer;
     flex: none;
+    transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1);
   }
-  .capture-btn .ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid rgba(255,255,255,0.85); }
+  .capture-btn .ring {
+    position: absolute; inset: 0; border-radius: 50%; border: 3px solid rgba(255,255,255,0.85);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
   .capture-btn .core {
     position: absolute; inset: 5px; border-radius: 50%; background: #fff;
-    transition: transform 0.12s ease;
+    transition: transform 0.12s ease, background 0.2s ease;
   }
   .capture-btn:active .core { transform: scale(0.88); }
+  /* Highlighted once the aim target locks onto the current step — capture
+     stays tappable the whole time, this is only a visual cue. */
+  .capture-btn.ready { transform: scale(1.08); }
+  .capture-btn.ready .ring { border-color: var(--good); box-shadow: 0 0 0 6px rgba(62,224,160,0.2); }
+  .capture-btn.ready .core { background: var(--good); }
   .spacer-54 { width: 54px; flex: none; }
 
   .flash {
@@ -697,6 +757,7 @@
             <span class="label">Escaneando habitación</span>
             <span class="count" id="scan-count">Vista 1 de 12</span>
             <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:8%;"></div></div>
+            <div class="step-dots" id="step-dots"></div>
           </div>
 
           <div class="guide-wrap">
@@ -704,6 +765,11 @@
               <div class="guide-pulse"></div>
               <div class="guide-ring"></div>
               <span class="tick t"></span><span class="tick b"></span><span class="tick l"></span><span class="tick r"></span>
+              <div class="aim-target" id="aim-target">
+                <span class="chevron">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M12 4l6 8H6l6-8z" fill="currentColor"/></svg>
+                </span>
+              </div>
               <div class="detected-check">
                 <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 <span>Posición detectada</span>
@@ -889,14 +955,28 @@
     orientationBaseline: null,
     yawCalibration: null,
     movement: 0,
-    positionDetected: true
+    positionDetected: true,
+    // Smoothed angular error (degrees) between the live orientation and the
+    // current step's target yaw/pitch — drives the moving aim target.
+    aimYawErr: 0,
+    aimPitchErr: 0
   };
+
+  // How much the live orientation can differ from the target and still
+  // count as "aligned" (shows the ✓ and highlights capture).
+  var AIM_TOLERANCE_DEG = 14;
+  // Degrees-to-pixels mapping for the moving aim target, and how far from
+  // center it's allowed to travel before clamping to the edge.
+  var AIM_PX_PER_DEG = 3.4;
+  var AIM_MAX_RADIUS = 108;
+  // Smoothing factor for the aim target's motion (0-1, higher = snappier).
+  var AIM_SMOOTHING = 0.28;
 
   var els = {};
   ["view-home","view-instructions","view-scan","view-complete","view-processing","view-results",
    "btn-start","btn-back-home","btn-init-camera","instr-error",
    "video","demo-plane","flash","btn-close-scan","quality-badge","quality-dot","quality-label",
-   "scan-count","progress-fill","guide","step-instruction","step-detail","manual-tag",
+   "scan-count","progress-fill","step-dots","guide","aim-target","step-instruction","step-detail","manual-tag",
    "thumb","btn-capture","permission-overlay","permission-icon","permission-title","permission-text","permission-code",
    "btn-retry-camera","btn-demo-fallback","btn-exit-scan",
    "complete-sub","btn-process","stage-list","results-sub","btn-new-scan","btn-home",
@@ -923,6 +1003,7 @@
     requestOrientationPermission();
     startCamera();
     showView("scan");
+    renderStep(); // refresh instruction/step-dots/aim target for a fresh scan
   });
 
   // ---------------- Orientation (DeviceOrientation API) ----------------
@@ -964,7 +1045,7 @@
       state.movement = Math.max(dAlpha, dBeta * 0.5, dGamma * 0.5);
     }
     state.lastOrientation = current;
-    updatePositionDetected();
+    updateAimTarget();
   });
 
   function resetMovementBaseline() {
@@ -976,16 +1057,78 @@
     return sawOrientationEvent && state.orientationGranted;
   }
 
-  function updatePositionDetected() {
+  // Live orientation relative to the calibration baseline (same convention
+  // as captureOrientation() below): yaw 0 / pitch 0 is wherever the phone
+  // was pointed when the scan started.
+  function liveOrientation() {
+    if (!state.yawCalibration || !state.lastOrientation) return null;
+    var yaw = normalizeYaw((state.lastOrientation.alpha || 0) - state.yawCalibration.alpha);
+    var pitch = (state.lastOrientation.beta || 0) - state.yawCalibration.beta;
+    return { yaw: yaw, pitch: pitch };
+  }
+
+  // Repositions the moving aim target based on the angular gap between the
+  // phone's live orientation and the current step's target yaw/pitch, and
+  // toggles the "aligned" state (✓ Posición detectada / highlighted capture
+  // button) once that gap is inside the tolerance. Runs on every orientation
+  // reading so the target's motion reads as continuous, not stepped.
+  function updateAimTarget(snap) {
     var step = scanSteps[state.stepIndex];
-    var detected;
-    if (!sensorsAvailable() || state.stepIndex === 0 || step.expectedTurn === 0) {
-      detected = true;
-    } else {
-      detected = state.movement >= Math.min(10, step.expectedTurn * 0.4);
+    var live = sensorsAvailable() ? liveOrientation() : null;
+
+    if (!live) {
+      // No sensors / no permission: keep the manual fallback — target stays
+      // centered and capture is always considered "ready".
+      state.aimYawErr = 0;
+      state.aimPitchErr = 0;
+      els.aimTarget.style.transform = "translate(0, 0)";
+      els.aimTarget.classList.remove("at-edge");
+      setAligned(true);
+      return;
     }
-    state.positionDetected = detected;
-    els.guide.classList.toggle("detected", detected);
+
+    var rawYawErr = normalizeYaw(live.yaw - step.yaw);
+    var rawPitchErr = live.pitch - step.pitch;
+    if (snap) {
+      // A new step just started: jump straight to the real gap instead of
+      // easing in from zero, since the target genuinely changed.
+      state.aimYawErr = rawYawErr;
+      state.aimPitchErr = rawPitchErr;
+    } else {
+      state.aimYawErr += (rawYawErr - state.aimYawErr) * AIM_SMOOTHING;
+      state.aimPitchErr += (rawPitchErr - state.aimPitchErr) * AIM_SMOOTHING;
+    }
+
+    var ox = -state.aimYawErr * AIM_PX_PER_DEG;
+    var oy = state.aimPitchErr * AIM_PX_PER_DEG;
+    var dist = Math.hypot(ox, oy);
+    var clamped = dist > AIM_MAX_RADIUS;
+    if (clamped) {
+      var scale = AIM_MAX_RADIUS / dist;
+      ox *= scale;
+      oy *= scale;
+    }
+    els.aimTarget.style.transform = "translate(" + ox.toFixed(1) + "px, " + oy.toFixed(1) + "px)";
+    els.aimTarget.classList.toggle("at-edge", clamped);
+    if (clamped) {
+      var angle = (Math.atan2(oy, ox) * 180) / Math.PI + 90;
+      els.aimTarget.querySelector(".chevron").style.transform = "rotate(" + angle.toFixed(1) + "deg)";
+    }
+
+    var angularDist = Math.hypot(state.aimYawErr, state.aimPitchErr);
+    setAligned(angularDist <= AIM_TOLERANCE_DEG);
+  }
+
+  function setAligned(aligned) {
+    state.positionDetected = aligned;
+    els.guide.classList.toggle("detected", aligned);
+    els.btnCapture.classList.toggle("ready", aligned);
+  }
+
+  // Called when moving to a new step: snaps the aim target straight to its
+  // real position for the new target instead of easing in from the old one.
+  function resetAimTarget() {
+    updateAimTarget(true);
   }
 
   // ---------------- Camera ----------------
@@ -1174,15 +1317,42 @@
 
   // ---------------- Scan step rendering ----------------
 
+  var stepDotsBuilt = false;
+  function buildStepDots() {
+    if (stepDotsBuilt) return;
+    stepDotsBuilt = true;
+    els.stepDots.innerHTML = "";
+    scanSteps.forEach(function (step, i) {
+      var dot = document.createElement("span");
+      dot.className = "step-dot";
+      dot.setAttribute("aria-label", "Vista " + (i + 1) + ": " + step.instruction);
+      els.stepDots.appendChild(dot);
+    });
+  }
+
+  function updateStepDots() {
+    var dots = els.stepDots.children;
+    for (var i = 0; i < dots.length; i++) {
+      var done = i < state.shots.length;
+      var active = !done && i === state.stepIndex;
+      dots[i].classList.toggle("done", done);
+      dots[i].classList.toggle("active", active);
+    }
+  }
+
   function renderStep() {
     var step = scanSteps[state.stepIndex];
     els.stepInstruction.textContent = step.instruction;
     els.stepDetail.textContent = step.detail;
     els.scanCount.textContent = "Vista " + (state.stepIndex + 1) + " de " + TOTAL;
     els.progressFill.style.width = Math.round(((state.stepIndex) / TOTAL) * 100 + 8) + "%";
-    els.manualTag.style.display = sensorsAvailable() ? "none" : "inline-block";
+    var manual = !sensorsAvailable();
+    els.manualTag.style.display = manual ? "inline-block" : "none";
+    els.guide.classList.toggle("manual-mode", manual);
     updateDemoBackdrop();
-    updatePositionDetected();
+    buildStepDots();
+    updateStepDots();
+    resetAimTarget();
   }
 
   function captureFrame() {
@@ -1223,11 +1393,9 @@
   // calibrated; otherwise the guided template's predefined yaw/pitch is used
   // as a fallback, so every capture always ends up with a usable position.
   function captureOrientation(step) {
-    if (sensorsAvailable() && state.yawCalibration && state.lastOrientation) {
-      var yaw = normalizeYaw((state.lastOrientation.alpha || 0) - state.yawCalibration.alpha);
-      var pitch = (state.lastOrientation.beta || 0) - state.yawCalibration.beta;
-      pitch = Math.max(-90, Math.min(90, pitch));
-      return { yaw: yaw, pitch: pitch, source: "sensor" };
+    var live = sensorsAvailable() ? liveOrientation() : null;
+    if (live) {
+      return { yaw: live.yaw, pitch: Math.max(-90, Math.min(90, live.pitch)), source: "sensor" };
     }
     return { yaw: step.yaw, pitch: step.pitch, source: "fallback" };
   }
@@ -1251,6 +1419,7 @@
     els.thumb.innerHTML = '<img src="' + result.dataUrl + '" alt="Última captura">';
 
     resetMovementBaseline();
+    updateStepDots();
 
     if (state.shots.length >= TOTAL) {
       setTimeout(finishScan, 320);
