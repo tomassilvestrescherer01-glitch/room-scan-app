@@ -331,16 +331,16 @@
   .progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.45s cubic-bezier(0.16,1,0.3,1); }
 
   /*
-   * Capture guide: a fixed rectangular frame with a fixed circular indicator
-   * at its exact center (it never moves — only its fill changes as you get
-   * closer), and ONE green target dot showing the real direction of the
-   * current target relative to which way you're facing right now. Nothing
-   * here travels from the edge to the center, and nothing captures on its
-   * own — reaching alignment only changes what's on screen; the shutter
-   * button is what actually takes the picture.
+   * Capture guide: a fixed rectangular frame with a FIXED template of 5
+   * capture points (top-left, top-right, center, bottom-left, bottom-right)
+   * drawn once — their screen positions never change. Each point is a real
+   * capture target (its own yaw/pitch); only its state changes as you turn
+   * toward it (pending → active → aligned) and as you capture it (→ done).
+   * Nothing here travels across the screen, and nothing captures on its
+   * own — the shutter button is what actually takes the picture.
    */
   .guide-wrap { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; }
-  .guide { position: relative; width: 250px; height: 340px; }
+  .guide { position: relative; width: 270px; height: 360px; }
 
   .capture-frame {
     position: absolute; inset: 0;
@@ -348,67 +348,61 @@
     border-radius: 4px;
   }
 
-  /* The single target dot: repositioned by JS on an ellipse just outside the
-     frame, at the real bearing to the ONE current target — never several at
-     once, never eased toward the center. Only its position (and, once
-     aligned, its color) change. */
-  .compass-dot {
-    position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
-    margin: -11px 0 0 -11px; border-radius: 50%;
+  .grid-points { position: absolute; inset: 0; }
+  .grid-point {
+    position: absolute; width: 0; height: 0; /* left/top set inline per point */
+    display: flex; align-items: center; justify-content: center;
+    transform: translate(-50%, -50%);
+  }
+  /* Big and unambiguous from arm's length: ~52px, well over a comfortable
+     mobile tap/see target. */
+  .grid-point .ring {
+    position: absolute; width: 52px; height: 52px; border-radius: 50%;
+    border: 2.5px solid rgba(255,255,255,0.45);
+    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .grid-point .dot {
+    position: absolute; width: 14px; height: 14px; border-radius: 50%;
+    background: rgba(255,255,255,0.45);
+    transition: background 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
+  }
+  .grid-point .check {
+    position: absolute; display: none; color: #04140c;
+    animation: check-pop 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+  .grid-point .check svg { width: 24px; height: 24px; }
+
+  /* pending (default): dim hollow ring, small dot — "○" */
+  /* active: brighter ring, pulses gently — "●" waiting to be found */
+  .grid-point.active .ring {
+    border-color: var(--accent-2);
+    box-shadow: 0 0 0 6px rgba(70,224,198,0.16);
+    animation: point-pulse 1.7s ease-in-out infinite;
+  }
+  .grid-point.active .dot { background: var(--accent-2); width: 18px; height: 18px; }
+  @keyframes point-pulse {
+    0%, 100% { box-shadow: 0 0 0 6px rgba(70,224,198,0.16); }
+    50% { box-shadow: 0 0 0 11px rgba(70,224,198,0.05); }
+  }
+  /* aligned: solid green fill + ✓ — "correctly pointed, go ahead and shoot" */
+  .grid-point.aligned .ring {
+    border-color: var(--good);
     background: var(--good);
-    box-shadow: 0 0 10px rgba(62,224,160,0.65);
-    opacity: 0; transform: translate(0, 0) scale(0.6);
-    transition: transform 0.28s cubic-bezier(0.22,1,0.36,1), opacity 0.28s ease, background 0.2s ease;
+    animation: none;
+    transform: scale(1.06);
   }
-  .compass-dot.show { opacity: 1; transform: translate(var(--dx), var(--dy)) scale(1); }
-  .guide.aligned .compass-dot { background: var(--accent-2); box-shadow: 0 0 16px rgba(70,224,198,0.85); }
+  .grid-point.aligned .dot { display: none; }
+  .grid-point.aligned .check { display: block; }
+  /* done: small muted check, dimmed — "✓ completado" */
+  .grid-point.done .ring { border-color: rgba(62,224,160,0.5); width: 34px; height: 34px; }
+  .grid-point.done .dot { display: none; }
+  .grid-point.done .check { display: block; color: var(--good); animation: none; }
+  .grid-point.done .check svg { width: 16px; height: 16px; }
 
-  /* The fixed central indicator: a static ring + a pie-style radial fill
-     (conic-gradient) that grows as the live orientation approaches the
-     current target, turning solid green once aligned. */
-  .center-indicator {
-    position: absolute; left: 50%; top: 50%; width: 64px; height: 64px;
-    margin: -32px 0 0 -32px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .center-indicator .track {
-    position: absolute; inset: 0; border-radius: 50%;
-    border: 2px solid rgba(255,255,255,0.35);
-  }
-  .center-indicator .fill {
-    position: absolute; inset: 3px; border-radius: 50%;
-    background: conic-gradient(var(--good) calc(var(--pct, 0) * 1%), transparent 0);
-    transition: background 0.12s linear;
-  }
-  .center-indicator .core {
-    position: relative; width: 44px; height: 44px; border-radius: 50%;
-    background: rgba(6,8,10,0.55); backdrop-filter: blur(2px);
-    display: flex; align-items: center; justify-content: center;
-    transition: background 0.2s ease;
-  }
-  .guide.aligned .center-indicator .core { background: var(--good); }
-  .guide.aligned .center-indicator svg { display: none; }
-  .center-indicator .check {
-    display: none; color: #04140c;
-  }
-  .guide.aligned .center-indicator .check {
-    display: block; animation: check-pop 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
-  }
-  .center-indicator .check svg { width: 22px; height: 22px; }
-  @keyframes check-pop {
-    0% { transform: scale(0.5); opacity: 0; }
-    65% { transform: scale(1.14); opacity: 1; }
-    100% { transform: scale(1); opacity: 1; }
-  }
-
-  /* Manual fallback (no sensors): frame + a plain neutral pulse, no compass
-     dots (we have no real orientation to place them with). */
-  .guide.manual-mode .compass-dot { display: none; }
-  .guide.manual-mode .center-indicator .track { animation: pulse-ring 2.2s cubic-bezier(0.4,0,0.6,1) infinite; }
-  @keyframes pulse-ring {
-    0% { transform: scale(1); opacity: 0.7; }
-    75%, 100% { transform: scale(1.35); opacity: 0; }
-  }
+  /* Manual fallback (no sensors): the active point can't tell you when
+     you're aligned, so it just sits there neutrally — capture is always
+     ready via the button regardless. */
+  .guide.manual-mode .grid-point.active .ring { animation: none; }
 
   .instruction-card {
     align-self: center;
@@ -468,6 +462,11 @@
   }
   .flash.go { animation: flash-out 0.4s ease-out forwards; }
   @keyframes flash-out { 0% { opacity: 0.85; } 100% { opacity: 0; } }
+  @keyframes check-pop {
+    0% { transform: scale(0.5); opacity: 0; }
+    65% { transform: scale(1.14); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
 
   .permission-overlay {
     position: absolute; inset: 0;
@@ -750,23 +749,11 @@
             <div class="guide" id="guide">
               <div class="capture-frame"></div>
 
-              <!-- Small reusable pool of "compass" dots: repositioned by JS
-                   around the frame to show where the next few pending
-                   targets are, relative to where the phone is pointed now. -->
-              <div class="compass-dot" id="dot-a"></div>
-
-              <!-- Fixed central indicator: never moves, only its fill and
-                   state change as the live orientation nears the target. -->
-              <div class="center-indicator">
-                <div class="track"></div>
-                <div class="fill" id="center-fill" style="--pct:0;"></div>
-                <div class="core">
-                  <svg viewBox="0 0 24 24" fill="none" width="20" height="20"><circle cx="12" cy="12" r="3" fill="rgba(255,255,255,0.6)"/></svg>
-                  <span class="check">
-                    <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </span>
-                </div>
-              </div>
+              <!-- Fixed 5-point capture template (top-left, top-right,
+                   center, bottom-left, bottom-right). Positions never
+                   change — only each point's pending/active/aligned/done
+                   state does, built once by buildGridPoints(). -->
+              <div class="grid-points" id="grid-points"></div>
             </div>
           </div>
 
@@ -903,34 +890,56 @@
 (function () {
   "use strict";
 
-  // Spatial capture sequence: one full horizontal turn on the spot, visited
-  // in the order a person actually walks through a room — the 4 main walls
-  // first, then the 4 corners, then the 8 in-between positions needed to
-  // close the full 360°. Pitch is 0 for all of them for now — ceiling/floor
-  // are a deliberate, separate follow-up, not part of this ring. yaw/pitch
-  // here double as the FALLBACK angle used when device sensors aren't
-  // available; when they are, the real measured orientation is stored per
-  // shot instead (see captureOrientation()).
-  var COMPASS_NAMES = ["Frente", "Frente-derecha", "Derecha", "Atrás-derecha", "Atrás", "Atrás-izquierda", "Izquierda", "Frente-izquierda"];
-  function compassName(yaw) {
-    return COMPASS_NAMES[Math.round(yaw / 45) % 8];
-  }
-  var SEQUENCE_YAWS = [
-    0, 90, 180, 270,        // 1-4:  main walls — frente, derecha, atrás, izquierda
-    45, 135, 225, 315,      // 5-8:  corners — frente-derecha, atrás-derecha, atrás-izquierda, frente-izquierda
-    22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5, 337.5 // 9-16: fill in the rest of the 360°
+  // Spatial capture plan: a fixed 5-point grid template (top-left, top-right,
+  // center, bottom-left, bottom-right) captured once per "orientation" the
+  // person turns to face. Each grid point is a small yaw/pitch offset from
+  // that orientation's base heading, giving 5 overlapping sub-views per wall
+  // — the raw material for a real stitched panorama later. Starting with
+  // just one orientation ("Frente") to validate the flow before adding the
+  // rest (Derecha, Atrás, Izquierda, diagonals).
+  var ORIENTATIONS = [
+    { name: "Frente", yaw: 0 }
+    // Next: { name: "Derecha", yaw: 90 }, { name: "Atrás", yaw: 180 }, { name: "Izquierda", yaw: 270 }, diagonals...
   ];
-  var scanSteps = SEQUENCE_YAWS.map(function (yawDeg, i) {
-    return {
-      id: i + 1,
-      instruction: compassName(yawDeg),
-      detail: yawDeg + "°",
-      yaw: yawDeg,
-      pitch: 0,
-      kind: "ring"
-    };
+
+  // Fixed on-screen layout (percent of the capture frame) — these never
+  // move or get recalculated from orientation; only their state (pending /
+  // active / done) changes. yaw/pitchOffset is relative to the
+  // orientation's base heading.
+  var GRID_POINTS = [
+    { key: "top-left", label: "Arriba-izquierda", xPct: 26, yPct: 24, yawOffset: -14, pitchOffset: 12 },
+    { key: "top-right", label: "Arriba-derecha", xPct: 74, yPct: 24, yawOffset: 14, pitchOffset: 12 },
+    { key: "center", label: "Centro", xPct: 50, yPct: 50, yawOffset: 0, pitchOffset: 0 },
+    { key: "bottom-left", label: "Abajo-izquierda", xPct: 26, yPct: 76, yawOffset: -14, pitchOffset: -12 },
+    { key: "bottom-right", label: "Abajo-derecha", xPct: 74, yPct: 76, yawOffset: 14, pitchOffset: -12 }
+  ];
+
+  var scanSteps = [];
+  ORIENTATIONS.forEach(function (orientation, oi) {
+    GRID_POINTS.forEach(function (point, pi) {
+      scanSteps.push({
+        id: scanSteps.length + 1,
+        instruction: orientation.name,
+        detail: point.label,
+        yaw: normalizeYaw(orientation.yaw + point.yawOffset),
+        pitch: point.pitchOffset,
+        orientation: orientation.name,
+        orientationIndex: oi,
+        pointKey: point.key,
+        pointIndex: pi,
+        isLastOfOrientation: pi === GRID_POINTS.length - 1,
+        kind: "grid"
+      });
+    });
   });
   var TOTAL = scanSteps.length;
+
+  function normalizeYaw(deg) {
+    deg = deg % 360;
+    if (deg > 180) deg -= 360;
+    if (deg < -180) deg += 360;
+    return deg;
+  }
 
   function angleDiff(a, b) {
     var d = Math.abs(a - b) % 360;
@@ -948,31 +957,28 @@
     yawCalibration: null,
     movement: 0,
     positionDetected: true,
-    // Smoothed live orientation (relative to calibration) — the single
-    // target dot's position and the center fill are both derived from this
-    // one smoothed value, so they move together and stay continuous.
+    // Smoothed live orientation (relative to calibration) — used only to
+    // steady the alignment check against sensor jitter. It never drives any
+    // on-screen position: the 5 grid points are fixed and never move.
     smoothYaw: 0,
     smoothPitch: 0,
     smoothInit: false,
     capturing: false
   };
 
-  // How close the live orientation needs to be to the current target to
-  // count as "aligned" (center fills solid, "✓ Posición correcta").
+  // How close the live orientation needs to be to the active point's target
+  // to count as "aligned" (it fills solid, "✓ Posición correcta").
   var ALIGN_TOLERANCE_DEG = 12;
-  // The center ring starts filling once within this many degrees of target.
+  // The point starts filling once within this many degrees of its target.
   var APPROACH_RANGE_DEG = 55;
   // Smoothing factor for the live orientation reading (0-1, higher = snappier).
   var ORIENTATION_SMOOTHING = 0.25;
-  // Ellipse the single target dot sits on, just outside the capture frame.
-  var DOT_RADIUS_X = 150;
-  var DOT_RADIUS_Y = 195;
 
   var els = {};
   ["view-home","view-instructions","view-scan","view-complete","view-processing","view-results",
    "btn-start","btn-back-home","btn-init-camera","instr-error",
    "video","demo-plane","flash","btn-close-scan","quality-badge","quality-dot","quality-label",
-   "scan-count","progress-fill","guide","dot-a","center-fill","step-instruction","step-detail","manual-tag",
+   "scan-count","progress-fill","guide","grid-points","step-instruction","step-detail","manual-tag",
    "thumb","btn-capture","permission-overlay","permission-icon","permission-title","permission-text","permission-code",
    "btn-retry-camera","btn-demo-fallback","btn-exit-scan",
    "complete-sub","btn-process","stage-list","results-sub","btn-new-scan","btn-home",
@@ -1063,21 +1069,52 @@
     return { yaw: yaw, pitch: pitch };
   }
 
-  // The master per-tick update: smooths the phone's live orientation (so
-  // the target dot and the center fill both move continuously, never in
-  // steps), fills the FIXED center ring based on how close that is to the
-  // CURRENT target only, and places a SINGLE dot on a fixed ellipse around
-  // the frame at the real bearing to that target. Nothing here captures on
-  // its own — reaching "aligned" only changes what's on screen (✓ + a
-  // highlighted button); the person still has to press the shutter.
+  // Builds the 5 fixed grid-point elements once, positioned by GRID_POINTS'
+  // xPct/yPct — these coordinates never change again for the rest of the
+  // scan; only each point's pending/active/done class changes.
+  var gridPointEls = null;
+  function buildGridPoints() {
+    if (gridPointEls) return;
+    gridPointEls = GRID_POINTS.map(function (point) {
+      var el = document.createElement("div");
+      el.className = "grid-point";
+      el.style.left = point.xPct + "%";
+      el.style.top = point.yPct + "%";
+      el.innerHTML =
+        '<span class="ring"></span>' +
+        '<span class="dot"></span>' +
+        '<span class="check"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+      els.gridPoints.appendChild(el);
+      return el;
+    });
+  }
+
+  // Reflects state.stepIndex against the 5 points of the CURRENT
+  // orientation: points before it are "done", the one at stepIndex is
+  // "active", the rest stay "pending". Positions never change here.
+  function updateGridPointStates() {
+    var current = scanSteps[state.stepIndex];
+    gridPointEls.forEach(function (el, i) {
+      el.classList.remove("done", "active", "aligned");
+      if (i < current.pointIndex) {
+        el.classList.add("done");
+      } else if (i === current.pointIndex) {
+        el.classList.add("active");
+      }
+    });
+  }
+
+  // The master per-tick update: smooths the phone's live orientation (only
+  // to steady the alignment check against sensor jitter — it never moves
+  // anything on screen), and checks how close that is to the ACTIVE grid
+  // point's target yaw/pitch. Reaching "aligned" only changes that point's
+  // look (✓ + highlighted button) — nothing captures on its own.
   function updateCaptureGuide() {
     var raw = sensorsAvailable() ? liveOrientation() : null;
 
     if (!raw) {
-      // Manual fallback: no real orientation to guide with. Frame + a plain
-      // neutral pulse (see .manual-mode in CSS); capture is always ready.
-      els.centerFill.style.setProperty("--pct", "0");
-      els.dotA.classList.remove("show");
+      // Manual fallback: no real orientation to guide with. The active
+      // point just sits there neutrally; capture is always ready.
       setAligned(true);
       return;
     }
@@ -1095,27 +1132,18 @@
     var yawErr = normalizeYaw(state.smoothYaw - target.yaw);
     var pitchErr = state.smoothPitch - target.pitch;
     var angularDist = Math.hypot(yawErr, pitchErr);
-
-    var pct = Math.max(0, Math.min(1, (APPROACH_RANGE_DEG - angularDist) / (APPROACH_RANGE_DEG - ALIGN_TOLERANCE_DEG)));
-    els.centerFill.style.setProperty("--pct", String(Math.round(pct * 100)));
     setAligned(angularDist <= ALIGN_TOLERANCE_DEG);
-
-    // Single target dot, positioned by real bearing (0° = straight ahead,
-    // rotates around the frame as you turn) — it never approaches the
-    // center; only the fixed center ring's fill communicates proximity.
-    var bearing = normalizeYaw(target.yaw - state.smoothYaw);
-    var rad = (bearing * Math.PI) / 180;
-    var dx = Math.sin(rad) * DOT_RADIUS_X;
-    var dy = -Math.cos(rad) * DOT_RADIUS_Y;
-    els.dotA.style.setProperty("--dx", dx.toFixed(1) + "px");
-    els.dotA.style.setProperty("--dy", dy.toFixed(1) + "px");
-    els.dotA.classList.add("show");
   }
 
   function setAligned(aligned) {
     state.positionDetected = aligned;
     els.guide.classList.toggle("aligned", aligned);
     els.btnCapture.classList.toggle("ready", aligned);
+    if (gridPointEls) {
+      var current = scanSteps[state.stepIndex];
+      var activeEl = gridPointEls[current.pointIndex];
+      if (activeEl) activeEl.classList.toggle("aligned", aligned);
+    }
   }
 
   // ---------------- Camera ----------------
@@ -1314,6 +1342,8 @@
     els.manualTag.style.display = manual ? "inline-block" : "none";
     els.guide.classList.toggle("manual-mode", manual);
     updateDemoBackdrop();
+    buildGridPoints();
+    updateGridPointStates();
     updateCaptureGuide();
   }
 
@@ -1344,13 +1374,6 @@
     return { dataUrl: canvas.toDataURL("image/jpeg", 0.85), quality: q };
   }
 
-  function normalizeYaw(deg) {
-    deg = deg % 360;
-    if (deg > 180) deg -= 360;
-    if (deg < -180) deg += 360;
-    return deg;
-  }
-
   // Real measured orientation for this shot when sensors are available and
   // calibrated; otherwise the guided template's predefined yaw/pitch is used
   // as a fallback, so every capture always ends up with a usable position.
@@ -1371,18 +1394,21 @@
 
     var result = captureFrame();
     var step = scanSteps[state.stepIndex];
-    var orientation = captureOrientation(step);
+    var measured = captureOrientation(step);
     state.shots.push({
       id: step.id,
+      order: state.shots.length,
       dataUrl: result.dataUrl,
       quality: result.quality,
-      yaw: orientation.yaw,
-      pitch: orientation.pitch,
+      yaw: measured.yaw,
+      pitch: measured.pitch,
       targetYaw: step.yaw,
       targetPitch: step.pitch,
+      orientation: step.orientation,
+      positionInOrientation: step.pointKey,
       instruction: step.instruction,
       kind: step.kind,
-      orientationSource: orientation.source
+      orientationSource: measured.source
     });
 
     els.flash.classList.remove("go"); void els.flash.offsetWidth; els.flash.classList.add("go");
