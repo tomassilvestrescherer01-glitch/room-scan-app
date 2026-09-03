@@ -493,8 +493,15 @@
     animation: check-pop 0.5s cubic-bezier(0.34,1.56,0.64,1) both;
   }
   .check-circle svg { width: 38px; height: 38px; color: var(--good); }
+  .check-circle.incomplete { background: rgba(255,180,84,0.14); border-color: rgba(255,180,84,0.32); }
+  .check-circle.incomplete svg { color: var(--warn); }
   #view-complete h2 { font-size: 22px; }
   #view-complete .sub { margin-top: 8px; font-size: 14.5px; color: var(--text-dim); max-width: 26ch; line-height: 1.5; }
+  .ring-warning {
+    max-width: 280px; margin: 0; font-size: 13px; line-height: 1.5;
+    color: var(--warn); background: rgba(255,180,84,0.1);
+    border: 1px solid rgba(255,180,84,0.25); border-radius: 12px; padding: 10px 14px;
+  }
 
   /* ---------- Processing ---------- */
 
@@ -771,19 +778,35 @@
             <button class="btn-ghost" id="btn-exit-scan" style="display:none;">Volver</button>
           </div>
         </div>
+
+        <div class="permission-overlay" id="exit-confirm-overlay">
+          <div class="permission-icon" id="exit-confirm-icon">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4m0 4h.01M10.3 3.86L1.82 18a1.5 1.5 0 0 0 1.3 2.25h17.76a1.5 1.5 0 0 0 1.3-2.25L13.7 3.86a1.5 1.5 0 0 0-2.6 0z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3 id="exit-confirm-title">¿Salir del escaneo?</h3>
+          <p id="exit-confirm-text"></p>
+          <div class="permission-actions">
+            <button class="btn-secondary" id="btn-exit-cancel">Seguir escaneando</button>
+            <button class="btn-ghost" id="btn-exit-confirm">Salir y guardar progreso</button>
+          </div>
+        </div>
       </div>
 
-      <!-- 4. COMPLETE -->
+      <!-- 4. COMPLETE (also doubles as the "incomplete scan" summary when
+           the person exits early — see renderCompleteScreen()) -->
       <div class="view" id="view-complete">
         <div class="pad safe-top safe-bottom complete-body">
-          <div class="check-circle">
+          <div class="check-circle" id="complete-icon">
             <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
           <div>
-            <h2>Escaneo completo</h2>
+            <h2 id="complete-title">Escaneo completo</h2>
             <p class="sub" id="complete-sub">Capturamos 12 vistas diferentes de tu habitación.</p>
           </div>
+          <p class="ring-warning" id="ring-warning" style="display:none;"></p>
           <button class="btn-primary" id="btn-process" style="max-width:280px; margin-top:8px;">Procesar habitación</button>
+          <button class="btn-primary" id="btn-resume-scan" style="max-width:280px; margin-top:8px; display:none;">Retomar escaneo</button>
+          <button class="btn-ghost" id="btn-discard-scan" style="display:none;">Descartar y empezar de nuevo</button>
         </div>
       </div>
 
@@ -958,7 +981,9 @@
    "scan-count","progress-fill","guide","marker","step-instruction","step-detail","manual-tag",
    "thumb","btn-capture","permission-overlay","permission-icon","permission-title","permission-text","permission-code",
    "btn-retry-camera","btn-demo-fallback","btn-exit-scan",
-   "complete-sub","btn-process","stage-list","results-sub","btn-new-scan","btn-home",
+   "exit-confirm-overlay","exit-confirm-text","btn-exit-cancel","btn-exit-confirm",
+   "complete-icon","complete-title","complete-sub","ring-warning","btn-process","btn-resume-scan","btn-discard-scan",
+   "stage-list","results-sub","btn-new-scan","btn-home",
    "tour-stage","tour-layer-a","tour-layer-b","tour-label","tour-dots","tour-hint","btn-view-photos",
    "lightbox","lb-position","lb-img","lb-caption","lb-prev","lb-next","btn-lb-close","canvas"
   ].forEach(function (id) { els[id.replace(/-([a-z])/g, function(_,c){return c.toUpperCase();})] = document.getElementById(id); });
@@ -1245,7 +1270,7 @@
 
   els.btnRetryCamera.addEventListener("click", startCamera);
   els.btnDemoFallback.addEventListener("click", function () { enterDemoMode(); });
-  els.btnExitScan.addEventListener("click", function () { exitScan(); });
+  els.btnExitScan.addEventListener("click", function () { requestExitScan(); });
 
   function updateDemoBackdrop() {
     var hue = 220 + state.stepIndex * 9;
@@ -1389,9 +1414,48 @@
 
   els.btnCapture.addEventListener("click", performCapture);
 
-  els.btnCloseScan.addEventListener("click", exitScan);
+  els.btnCloseScan.addEventListener("click", requestExitScan);
 
-  function exitScan() {
+  // Rings a real panorama can't be built without — used only for the
+  // warning shown before an early exit, never blocks anything.
+  var CORE_RINGS = ["top", "bottom"];
+  function missingCoreRings() {
+    return CORE_RINGS.filter(function (key) {
+      return !state.shots.some(function (shot) { return shot.ring === key; });
+    });
+  }
+
+  // Tapping the X: if nothing was captured yet there's nothing to lose, so
+  // exit straight away. Otherwise ask first — exiting now discards nothing
+  // (progress is kept for "Retomar escaneo"), but warn if the rings a
+  // panorama actually needs (top/bottom) aren't captured yet.
+  function requestExitScan() {
+    if (state.shots.length === 0) {
+      discardScan();
+      return;
+    }
+    var missing = missingCoreRings();
+    var text = "Tenés " + state.shots.length + " de " + TOTAL + " capturas guardadas. Podés retomar más tarde desde donde quedaste.";
+    if (missing.length) {
+      var names = missing.map(function (k) { return k === "top" ? "superior" : "inferior"; }).join(" e ");
+      text += " Sin el anillo " + names + " todavía no vas a poder armar el panorama.";
+    }
+    els.exitConfirmText.textContent = text;
+    els.exitConfirmOverlay.classList.add("show");
+  }
+
+  els.btnExitCancel.addEventListener("click", function () {
+    els.exitConfirmOverlay.classList.remove("show");
+  });
+
+  els.btnExitConfirm.addEventListener("click", function () {
+    els.exitConfirmOverlay.classList.remove("show");
+    stopCamera();
+    showView("complete");
+    renderCompleteScreen();
+  });
+
+  function discardScan() {
     stopCamera();
     resetAll();
     showView("home");
@@ -1423,9 +1487,57 @@
 
   function finishScan() {
     stopCamera();
-    els.completeSub.textContent = "Capturamos " + state.shots.length + " vistas diferentes de tu habitación.";
     showView("complete");
+    renderCompleteScreen();
   }
+
+  // Drives the "complete" screen for BOTH cases: a full scan (all TOTAL
+  // captured) and an early exit (some captured, saved for later). The
+  // counter always reflects the real number of shots taken, never the
+  // planned total.
+  function renderCompleteScreen() {
+    var count = state.shots.length;
+    var complete = count >= TOTAL;
+
+    els.completeIcon.classList.toggle("incomplete", !complete);
+    els.btnProcess.style.display = complete ? "" : "none";
+    els.btnResumeScan.style.display = complete ? "none" : "";
+    els.btnDiscardScan.style.display = complete ? "none" : "";
+
+    if (complete) {
+      els.completeTitle.textContent = "Escaneo completo";
+      els.completeSub.textContent = "Capturamos " + count + " vistas diferentes de tu habitación.";
+      els.ringWarning.style.display = "none";
+    } else {
+      els.completeTitle.textContent = "Escaneo incompleto";
+      els.completeSub.textContent = count + " de " + TOTAL + " capturas — podés retomar desde donde quedaste.";
+      var missing = missingCoreRings();
+      if (missing.length) {
+        var names = missing.map(function (k) { return k === "top" ? "superior" : "inferior"; }).join(" e ");
+        els.ringWarning.textContent = "Sin el anillo " + names + " todavía no vas a poder armar el panorama.";
+        els.ringWarning.style.display = "";
+      } else {
+        els.ringWarning.style.display = "none";
+      }
+    }
+  }
+
+  els.btnResumeScan.addEventListener("click", function () {
+    // Keep state.shots/stepIndex as they are — pick up exactly where the
+    // scan left off. Recalibrate orientation fresh, though: however the
+    // phone is being held right now becomes the new yaw/pitch 0.
+    state.yawCalibration = null;
+    state.orientationBaseline = null;
+    state.smoothInit = false;
+    requestOrientationPermission();
+    startCamera();
+    showView("scan");
+    renderStep();
+  });
+
+  els.btnDiscardScan.addEventListener("click", function () {
+    discardScan();
+  });
 
   // ---------------- Processing ----------------
 
@@ -1581,6 +1693,7 @@
 
   function renderResults() {
     els.resultsSub.textContent = "Recorrido de " + state.shots.length + " vistas del espacio.";
+    els.btnViewPhotos.textContent = "Ver las " + state.shots.length + " fotos";
     tour.yaw = 0;
     tour.pitch = 0;
     tour.activeIndex = -1;
