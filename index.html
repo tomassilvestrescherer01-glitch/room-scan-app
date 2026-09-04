@@ -540,10 +540,6 @@
   .stage-row.error .status-dot { border: none; background: #ff5a5a; animation: none; }
   .proc-footer { font-size: 12px; color: var(--text-faint); }
 
-  .proc-progress-wrap { width: 100%; max-width: 280px; display: flex; align-items: center; gap: 10px; }
-  .proc-progress-track { flex: 1; height: 6px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
-  .proc-progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width 0.15s linear; }
-  .proc-progress-label { font-size: 11.5px; color: var(--text-faint); flex: none; min-width: 32px; text-align: right; }
 
   .proc-error {
     width: 100%; max-width: 280px; background: rgba(255,90,90,0.08);
@@ -841,29 +837,21 @@
           </div>
           <div>
             <h2>Armando el panorama</h2>
-            <p class="sub">Esto puede tardar según tu conexión y el celular</p>
+            <p class="sub">Proyectando cada foto sobre la esfera con su ángulo real</p>
           </div>
           <div class="stage-list" id="stage-list">
-            <div class="stage-row pending" data-stage="engine">
-              <span class="name">Descargando motor de stitching</span>
-              <span class="status-dot"></span><span class="check-mark">✓</span>
-            </div>
             <div class="stage-row pending" data-stage="mid">
-              <span class="name">Cosiendo anillo medio</span>
+              <span class="name">Proyectando anillo medio</span>
               <span class="status-dot"></span><span class="check-mark">✓</span>
             </div>
             <div class="stage-row pending" data-stage="edges">
-              <span class="name">Cosiendo anillos superior e inferior</span>
+              <span class="name">Proyectando anillos superior/inferior + cenit/nadir</span>
               <span class="status-dot"></span><span class="check-mark">✓</span>
             </div>
             <div class="stage-row pending" data-stage="union">
-              <span class="name">Uniendo todo en un panorama</span>
+              <span class="name">Combinando todo en el panorama final</span>
               <span class="status-dot"></span><span class="check-mark">✓</span>
             </div>
-          </div>
-          <div class="proc-progress-wrap" id="proc-progress-wrap" style="display:none;">
-            <div class="proc-progress-track"><div class="proc-progress-fill" id="proc-progress-fill"></div></div>
-            <span class="proc-progress-label" id="proc-progress-label">0%</span>
           </div>
           <p class="proc-footer" id="proc-footer">Preparando…</p>
 
@@ -1044,7 +1032,7 @@
    "btn-retry-camera","btn-demo-fallback","btn-exit-scan",
    "exit-confirm-overlay","exit-confirm-text","btn-exit-cancel","btn-exit-confirm",
    "complete-icon","complete-title","complete-sub","ring-warning","btn-process","btn-resume-scan","btn-discard-scan",
-   "stage-list","proc-progress-wrap","proc-progress-fill","proc-progress-label","proc-footer",
+   "stage-list","proc-footer",
    "proc-error","proc-error-text","btn-proc-retry","btn-proc-skip",
    "results-sub","btn-new-scan","btn-home",
    "tour-stage","tour-layer-a","tour-layer-b","tour-label","tour-dots","tour-hint","btn-view-photos",
@@ -1614,125 +1602,158 @@
     discardScan();
   });
 
-  // ---------------- Etapa 3: stitching real con OpenCV.js en un Web Worker ----------------
+  // ---------------- Etapa 3: stitching real por proyección esférica ----------------
   //
-  // No hay backend: OpenCV.js se descarga lazy desde su CDN oficial (con
-  // barra de progreso real por bytes) recién cuando el usuario aprieta
-  // "Procesar", y todo el trabajo pesado corre en un Web Worker armado con
-  // un Blob URL (no hay un .js aparte para no romper el esquema de archivo
-  // único). Estrategia por partes: se cose primero cada anillo (medio,
-  // superior, inferior) por separado y recién después se unen esos paneles
-  // más el cenit/nadir en un solo panorama, para no acumular de golpe 30
-  // Mats de alta resolución en memoria. Si el stitching falla o no hay
-  // suficientes fotos, NO se inventa ni se simula ningún panorama: se
-  // muestra el error tal cual y queda disponible el visor por foto más
-  // cercana (el de la Etapa 1) como fallback.
+  // No hay backend, y el módulo de stitching de OpenCV.js no viene incluido
+  // en los builds públicos (docs.opencv.org lo excluye para no inflar el
+  // WASM) — confirmado en uso real, no solo en teoría. En vez de depender
+  // de una librería externa (con toda la fragilidad de CDN/CORS/WASM que
+  // ya trajo problemas), el panorama se arma con algo que la app YA tiene:
+  // el yaw/pitch real (sensor) o del template (fallback manual) de cada
+  // foto. Cada foto se proyecta directo sobre la esfera equirectangular
+  // con matemática de cámara estándar (misma idea que usan las apps de
+  // "photo sphere" asistidas por sensores), y donde dos fotos se solapan
+  // se mezclan por peso (más peso cerca del centro de cada foto, menos
+  // cerca de sus bordes). Cada píxel del resultado sale de una foto real;
+  // no hay nada simulado. Todo corre en un Web Worker (Blob URL, sin
+  // archivo aparte) para no congelar la UI.
 
-  var CV_BASE = "https://docs.opencv.org/4.9.0/";
-  var CV_URL = CV_BASE + "opencv.js";
-  var STITCH_MAX_DIM = 2000; // lado largo, en px, de las fotos que se cosen (las originales no se tocan)
+  var EQUI_WIDTH = 4096;
+  var EQUI_HEIGHT = 2048; // 2:1, el estándar para equirectangular
+  // FOV horizontal asumido de la cámara trasera del celular. Es una
+  // aproximación (no hay forma estándar de leer el FOV real desde
+  // getUserMedia) — variar esta constante ajusta cuánto "abre" cada foto
+  // al proyectarla.
+  var ASSUMED_HFOV_DEG = 67;
 
   var WORKER_SRC = [
     '"use strict";',
-    'var CV_BASE = ' + JSON.stringify(CV_BASE) + ';',
-    '// Emscripten resuelve el .wasm relativo a self.location cuando está',
-    '// disponible importScripts, lo cual en un worker armado desde un Blob',
-    '// URL apuntaría mal — por eso se fija locateFile a mano.',
-    'self.Module = { locateFile: function (p) { return CV_BASE + p; } };',
-    'importScripts(' + JSON.stringify(CV_URL) + ');',
     '',
-    'function matFromBitmap(bitmap) {',
-    '  var canvas = new OffscreenCanvas(bitmap.width, bitmap.height);',
-    '  var ctx = canvas.getContext("2d");',
-    '  ctx.drawImage(bitmap, 0, 0);',
-    '  var imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);',
-    '  return cv.matFromImageData(imgData);',
-    '}',
+    'function projectPhoto(photo, acc, W, H, hfovDeg) {',
+    '  var w = photo.width, h = photo.height;',
+    '  var hfov = hfovDeg * Math.PI / 180;',
+    '  var fPx = (w / 2) / Math.tan(hfov / 2);',
+    '  var vfov = 2 * Math.atan((h / 2) / fPx);',
+    '  var yaw0 = photo.yaw * Math.PI / 180;',
+    '  var pitch0 = Math.max(-89.9, Math.min(89.9, photo.pitch)) * Math.PI / 180;',
+    '  var sy = Math.sin(yaw0), cy = Math.cos(yaw0);',
+    '  var sp = Math.sin(pitch0), cp = Math.cos(pitch0);',
+    '  // Base ortonormal de la cámara (forward/right/up) para yaw+pitch, roll 0.',
+    '  var fx = cp * sy, fy = sp, fz = cp * cy;',
+    '  var rx = cy, ry = 0, rz = -sy;',
+    '  var ux = -sp * sy, uy = cp, uz = -sp * cy;',
     '',
-    'function stitchMats(mats) {',
-    '  var vec = new cv.MatVector();',
-    '  for (var i = 0; i < mats.length; i++) vec.push_back(mats[i]);',
-    '  var stitcher = cv.Stitcher.create(cv.Stitcher.PANORAMA);',
-    '  try { if (stitcher.setPanoConfidenceThresh) stitcher.setPanoConfidenceThresh(0.6); } catch (e) {}',
-    '  var result = new cv.Mat();',
-    '  var status = stitcher.stitch(vec, result);',
-    '  vec.delete();',
-    '  stitcher.delete();',
-    '  if (status !== 0) {',
-    '    result.delete();',
-    '    var err = new Error("stitch-status-" + status);',
-    '    err.stitchStatus = status;',
-    '    throw err;',
+    '  // Caja delimitadora en espacio de salida (con margen extra: la',
+    '  // diagonal de la foto cubre más ángulo que el FOV horizontal solo).',
+    '  var halfH = (hfov / 2) * 1.35;',
+    '  var halfV = (vfov / 2) * 1.35;',
+    '  var latTop = Math.max(-Math.PI / 2, pitch0 - halfV);',
+    '  var latBot = Math.min(Math.PI / 2, pitch0 + halfV);',
+    '  var vFrom = Math.floor(((Math.PI / 2 - latBot) / Math.PI) * H);',
+    '  var vTo = Math.ceil(((Math.PI / 2 - latTop) / Math.PI) * H);',
+    '  vFrom = Math.max(0, vFrom); vTo = Math.min(H, vTo);',
+    '  // Cerca de los polos (cenit/nadir) una sola foto puede cubrir todas',
+    '  // las longitudes; si el rango angular se acerca a eso, escaneamos',
+    '  // el ancho completo en vez de acotar por yaw.',
+    '  var coversAllYaw = (halfH * 2) >= (Math.PI * 0.85) || latBot >= Math.PI / 2 - 0.05 || latTop <= -Math.PI / 2 + 0.05;',
+    '',
+    '  var uFromF = Math.floor(((yaw0 - halfH + Math.PI) / (2 * Math.PI)) * W);',
+    '  var uToF = Math.ceil(((yaw0 + halfH + Math.PI) / (2 * Math.PI)) * W);',
+    '  var src = photo.data; // Uint8ClampedArray RGBA',
+    '',
+    '  function sampleAndAccum(u, v) {',
+    '    var theta = (u / W) * 2 * Math.PI - Math.PI;',
+    '    var phi = Math.PI / 2 - (v / H) * Math.PI;',
+    '    var cphi = Math.cos(phi);',
+    '    var dx = cphi * Math.sin(theta), dy = Math.sin(phi), dz = cphi * Math.cos(theta);',
+    '    var camX = dx * rx + dy * ry + dz * rz;',
+    '    var camY = dx * ux + dy * uy + dz * uz;',
+    '    var camZ = dx * fx + dy * fy + dz * fz;',
+    '    if (camZ <= 0.05) return;',
+    '    var xNdc = camX / camZ, yNdc = camY / camZ;',
+    '    var px = w / 2 + xNdc * fPx;',
+    '    var py = h / 2 - yNdc * fPx;',
+    '    if (px < 0 || py < 0 || px >= w - 1 || py >= h - 1) return;',
+    '    // Peso: 1 en el centro óptico, se apaga suave hacia el borde del',
+    '    // encuadre (feathering), para que el solape entre fotos vecinas',
+    '    // se mezcle sin costura dura.',
+    '    var edge = Math.max(Math.abs(xNdc) / Math.tan(hfov / 2), Math.abs(yNdc) / Math.tan(vfov / 2));',
+    '    var weight = Math.max(0, 1 - edge);',
+    '    weight = weight * weight;',
+    '    if (weight <= 0.001) return;',
+    '    var x0 = Math.floor(px), y0 = Math.floor(py);',
+    '    var fx2 = px - x0, fy2 = py - y0;',
+    '    var i00 = (y0 * w + x0) * 4, i10 = (y0 * w + x0 + 1) * 4;',
+    '    var i01 = ((y0 + 1) * w + x0) * 4, i11 = ((y0 + 1) * w + x0 + 1) * 4;',
+    '    var r = (src[i00] * (1 - fx2) + src[i10] * fx2) * (1 - fy2) + (src[i01] * (1 - fx2) + src[i11] * fx2) * fy2;',
+    '    var g = (src[i00+1] * (1 - fx2) + src[i10+1] * fx2) * (1 - fy2) + (src[i01+1] * (1 - fx2) + src[i11+1] * fx2) * fy2;',
+    '    var b = (src[i00+2] * (1 - fx2) + src[i10+2] * fx2) * (1 - fy2) + (src[i01+2] * (1 - fx2) + src[i11+2] * fx2) * fy2;',
+    '    var idx = v * W + u;',
+    '    acc.r[idx] += r * weight; acc.g[idx] += g * weight; acc.b[idx] += b * weight; acc.w[idx] += weight;',
     '  }',
-    '  return result;',
-    '}',
     '',
-    'function stitchRing(bitmaps) {',
-    '  if (!bitmaps || !bitmaps.length) return null;',
-    '  if (bitmaps.length === 1) return matFromBitmap(bitmaps[0]);',
-    '  var mats = bitmaps.map(matFromBitmap);',
-    '  var pano = stitchMats(mats);',
-    '  mats.forEach(function (m) { m.delete(); });',
-    '  return pano;',
-    '}',
-    '',
-    'function matToBlob(mat) {',
-    '  var canvas = new OffscreenCanvas(mat.cols, mat.rows);',
-    '  cv.imshow(canvas, mat);',
-    '  return canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 });',
-    '}',
-    '',
-    'function waitForCv() {',
-    '  return new Promise(function (resolve) {',
-    '    if (cv.Mat) { resolve(); return; }',
-    '    cv["onRuntimeInitialized"] = resolve;',
-    '  });',
+    '  var vv, uu;',
+    '  if (coversAllYaw) {',
+    '    for (vv = vFrom; vv < vTo; vv++) { for (uu = 0; uu < W; uu++) sampleAndAccum(uu, vv); }',
+    '  } else {',
+    '    for (vv = vFrom; vv < vTo; vv++) {',
+    '      for (uu = uFromF; uu < uToF; uu++) {',
+    '        var u2 = ((uu % W) + W) % W;',
+    '        sampleAndAccum(u2, vv);',
+    '      }',
+    '    }',
+    '  }',
     '}',
     '',
     'self.onmessage = function (e) {',
     '  if (e.data.cmd !== "run") return;',
-    '  var rings = e.data.rings;',
-    '  waitForCv().then(function () {',
-    '    if (typeof cv.Stitcher === "undefined") {',
-    '      self.postMessage({ type: "error", message: "Este build de OpenCV.js no incluye el módulo de stitching." });',
-    '      return;',
-    '    }',
-    '    self.postMessage({ type: "engine-ready" });',
-    '    var panels = [];',
-    '    try {',
-    '      self.postMessage({ type: "stage", stage: "mid", status: "active" });',
-    '      var midPanel = stitchRing(rings.mid);',
-    '      if (midPanel) panels.push(midPanel);',
-    '      self.postMessage({ type: "stage", stage: "mid", status: "done" });',
+    '  var photos = e.data.photos; // [{yaw,pitch,width,height,data,ring}]',
+    '  var W = e.data.width, H = e.data.height, hfov = e.data.hfovDeg;',
+    '  try {',
+    '    var acc = {',
+    '      r: new Float32Array(W * H), g: new Float32Array(W * H),',
+    '      b: new Float32Array(W * H), w: new Float32Array(W * H)',
+    '    };',
+    '    var groups = [',
+    '      { key: "mid", rings: ["mid"] },',
+    '      { key: "edges", rings: ["top", "bottom", "zenith", "nadir"] }',
+    '    ];',
+    '    groups.forEach(function (g) {',
+    '      self.postMessage({ type: "stage", stage: g.key, status: "active" });',
+    '      photos.filter(function (p) { return g.rings.indexOf(p.ring) !== -1; })',
+    '        .forEach(function (p) { projectPhoto(p, acc, W, H, hfov); });',
+    '      self.postMessage({ type: "stage", stage: g.key, status: "done" });',
+    '    });',
     '',
-    '      self.postMessage({ type: "stage", stage: "edges", status: "active" });',
-    '      var topPanel = stitchRing(rings.top);',
-    '      if (topPanel) panels.push(topPanel);',
-    '      var bottomPanel = stitchRing(rings.bottom);',
-    '      if (bottomPanel) panels.push(bottomPanel);',
-    '      if (rings.zenith && rings.zenith.length) panels.push(matFromBitmap(rings.zenith[0]));',
-    '      if (rings.nadir && rings.nadir.length) panels.push(matFromBitmap(rings.nadir[0]));',
-    '      self.postMessage({ type: "stage", stage: "edges", status: "done" });',
-    '',
-    '      self.postMessage({ type: "stage", stage: "union", status: "active" });',
-    '      if (panels.length < 2) { throw new Error("not-enough-panels"); }',
-    '      var finalMat = stitchMats(panels);',
-    '      panels.forEach(function (m) { m.delete(); });',
-    '      panels = [];',
-    '      matToBlob(finalMat).then(function (blob) {',
-    '        finalMat.delete();',
-    '        self.postMessage({ type: "stage", stage: "union", status: "done" });',
-    '        self.postMessage({ type: "done", blob: blob });',
-    '      }).catch(function (err) {',
-    '        finalMat.delete();',
-    '        self.postMessage({ type: "error", stage: "union", message: String(err && err.message || err) });',
-    '      });',
-    '    } catch (err) {',
-    '      panels.forEach(function (m) { try { m.delete(); } catch (e2) {} });',
-    '      var stageGuess = err && err.message === "not-enough-panels" ? "union" : undefined;',
-    '      self.postMessage({ type: "error", stage: stageGuess, message: String(err && err.message || err), stitchStatus: err && err.stitchStatus });',
+    '    self.postMessage({ type: "stage", stage: "union", status: "active" });',
+    '    var covered = 0;',
+    '    var out = new Uint8ClampedArray(W * H * 4);',
+    '    for (var i = 0; i < W * H; i++) {',
+    '      var wgt = acc.w[i];',
+    '      var o = i * 4;',
+    '      if (wgt > 0.01) {',
+    '        out[o] = acc.r[i] / wgt; out[o+1] = acc.g[i] / wgt; out[o+2] = acc.b[i] / wgt; out[o+3] = 255;',
+    '        covered++;',
+    '      } else {',
+    '        out[o] = 12; out[o+1] = 12; out[o+2] = 16; out[o+3] = 255; // hueco sin cobertura: gris oscuro, no inventado',
+    '      }',
     '    }',
-    '  });',
+    '    var coverageRatio = covered / (W * H);',
+    '    if (coverageRatio < 0.35) {',
+    '      throw new Error("low-coverage:" + Math.round(coverageRatio * 100));',
+    '    }',
+    '    var canvas = new OffscreenCanvas(W, H);',
+    '    var ctx = canvas.getContext("2d");',
+    '    ctx.putImageData(new ImageData(out, W, H), 0, 0);',
+    '    canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 }).then(function (blob) {',
+    '      self.postMessage({ type: "stage", stage: "union", status: "done" });',
+    '      self.postMessage({ type: "done", blob: blob, coverageRatio: coverageRatio });',
+    '    }).catch(function (err) {',
+    '      self.postMessage({ type: "error", stage: "union", message: String(err && err.message || err) });',
+    '    });',
+    '  } catch (err) {',
+    '    self.postMessage({ type: "error", message: String(err && err.message || err) });',
+    '  }',
     '};'
   ].join("\n");
 
@@ -1742,37 +1763,6 @@
     var worker = new Worker(url);
     URL.revokeObjectURL(url);
     return worker;
-  }
-
-  // Pre-calienta la caché HTTP del navegador con progreso real por bytes;
-  // el importScripts() del worker después reutiliza esa misma respuesta
-  // cacheada en vez de bajarla de nuevo (depende de que el CDN permita
-  // cachear la URL, que es lo normal para un asset versionado).
-  function fetchOpenCVSource(onProgress) {
-    return fetch(CV_URL, { cache: "force-cache" }).then(function (res) {
-      if (!res.ok) throw new Error("No se pudo descargar el motor de stitching (HTTP " + res.status + ").");
-      var total = Number(res.headers.get("content-length")) || 0;
-      var loaded = 0;
-      if (!res.body || !res.body.getReader) { onProgress(0, 0); return res.blob().then(function () {}); }
-      var reader = res.body.getReader();
-      function pump() {
-        return reader.read().then(function (r) {
-          if (r.done) { onProgress(loaded, total || loaded); return; }
-          loaded += r.value.length;
-          onProgress(loaded, total);
-          return pump();
-        });
-      }
-      return pump();
-    }).catch(function (err) {
-      // Un TypeError "Failed to fetch" es señal de red (sin conexión, CDN
-      // inalcanzable) — se traduce a un mensaje entendible en vez de
-      // mostrar el texto técnico del navegador.
-      if (err instanceof Error && /fetch/i.test(err.message) && !/motor de stitching/.test(err.message)) {
-        throw new Error("No se pudo conectar con el motor de stitching (revisá tu conexión a internet).");
-      }
-      throw err;
-    });
   }
 
   function loadDownscaledBitmap(dataUrl) {
@@ -1790,15 +1780,26 @@
     });
   }
 
+  var STITCH_MAX_DIM = 1600; // lado largo, en px, de las fotos que se proyectan (las originales no se tocan)
+
+  function bitmapToTransferablePhoto(bitmap, shot) {
+    // bitmap.close() zeroes out width/height immediately (per spec, the
+    // getters return 0 once the bitmap data is released) — read them
+    // BEFORE closing, not after, or every photo silently becomes 0x0.
+    var w = bitmap.width, h = bitmap.height;
+    var canvas = new OffscreenCanvas(w, h);
+    var ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0);
+    var imgData = ctx.getImageData(0, 0, w, h);
+    bitmap.close();
+    return { yaw: shot.yaw, pitch: shot.pitch || 0, ring: shot.ring, width: w, height: h, data: imgData.data };
+  }
+
   function describeStitchError(msg) {
-    if (msg.message === "not-enough-panels") return "No hay suficientes fotos para armar un panorama (faltan anillos completos).";
-    var codes = {
-      1: "Faltan imágenes o se solapan muy poco entre sí para encontrar coincidencias.",
-      2: "No se pudo estimar cómo encajan las fotos: puede que no tengan suficiente solapamiento o textura.",
-      3: "No se pudieron ajustar los parámetros de cámara al unir las fotos."
-    };
-    if (msg.stitchStatus != null && codes[msg.stitchStatus]) return codes[msg.stitchStatus];
-    if (msg.message && /módulo de stitching/.test(msg.message)) return msg.message;
+    if (msg.message && msg.message.indexOf("low-coverage:") === 0) {
+      var pct = msg.message.split(":")[1];
+      return "Las fotos capturadas solo cubren " + pct + "% de la esfera — falta ángulo real para armar un panorama completo.";
+    }
     return "No se pudo terminar el panorama (" + (msg.message || "error desconocido") + ").";
   }
 
@@ -1816,77 +1817,75 @@
     els.procError.style.display = "";
     els.procErrorText.textContent = text;
     els.procFooter.style.display = "none";
-    els.procProgressWrap.style.display = "none";
   }
   function hideProcError() {
     els.procError.style.display = "none";
   }
 
-  function runStitchWorker(payload, allBitmaps) {
+  function runStitchWorker(photos) {
     return new Promise(function (resolve, reject) {
       var worker;
       try {
         worker = buildStitchWorker();
       } catch (e) {
-        var startErr = new Error("No se pudo iniciar el proceso de stitching en este navegador.");
-        startErr.stage = "engine";
+        var startErr = new Error("No se pudo iniciar el proceso de armado en este navegador.");
+        startErr.stage = "mid";
         reject(startErr);
         return;
       }
       state.panoramaWorker = worker;
       var settled = false;
-      // El worker hace su propio importScripts(opencv.js) — eso no depende
-      // de CORS (a diferencia del fetch() de arriba, que es solo cosmético
-      // para la barra de progreso). Si nunca contesta nada, es la única
-      // señal real de que la carga del motor se colgó.
-      var engineTimeout = setTimeout(function () {
+      var timeout = setTimeout(function () {
         if (settled) return;
         settled = true;
         try { worker.terminate(); } catch (e2) {}
         state.panoramaWorker = null;
-        var err = new Error("El motor de stitching tardó demasiado en responder (puede que no esté disponible desde acá).");
-        err.stage = "engine";
+        var err = new Error("El armado del panorama tardó demasiado y se canceló.");
+        err.stage = "union";
         reject(err);
-      }, 45000);
+      }, 60000);
 
       worker.onmessage = function (e) {
         var msg = e.data;
-        if (msg.type === "engine-ready") {
-          setStage("engine", "done");
-          els.procProgressWrap.style.display = "none";
-        } else if (msg.type === "stage") {
+        if (msg.type === "stage") {
           setStage(msg.stage, msg.status);
           if (msg.status === "active") {
-            var labels = { mid: "Cosiendo anillo medio…", edges: "Cosiendo anillos superior e inferior…", union: "Uniendo el panorama…" };
+            var labels = {
+              mid: "Proyectando anillo medio…",
+              edges: "Proyectando anillos superior/inferior + cenit/nadir…",
+              union: "Combinando todo en el panorama final…"
+            };
             els.procFooter.textContent = labels[msg.stage] || "Procesando…";
           }
         } else if (msg.type === "done") {
           settled = true;
-          clearTimeout(engineTimeout);
+          clearTimeout(timeout);
           worker.terminate();
           state.panoramaWorker = null;
           resolve(msg.blob);
         } else if (msg.type === "error") {
           settled = true;
-          clearTimeout(engineTimeout);
+          clearTimeout(timeout);
           worker.terminate();
           state.panoramaWorker = null;
           var err = new Error(describeStitchError(msg));
-          err.stage = msg.stage || "engine";
+          err.stage = msg.stage || "union";
           reject(err);
         }
       };
       worker.onerror = function (e) {
         if (settled) return;
         settled = true;
-        clearTimeout(engineTimeout);
+        clearTimeout(timeout);
         try { worker.terminate(); } catch (e2) {}
         state.panoramaWorker = null;
-        var err = new Error("Error del motor de stitching: " + (e.message || "desconocido") + ".");
-        err.stage = "engine";
+        var err = new Error("Error armando el panorama: " + (e.message || "desconocido") + ".");
+        err.stage = "mid";
         reject(err);
       };
-      worker.postMessage({ cmd: "run", rings: payload }, allBitmaps);
+
+      var transferList = photos.map(function (p) { return p.data.buffer; });
+      worker.postMessage({ cmd: "run", photos: photos, width: EQUI_WIDTH, height: EQUI_HEIGHT, hfovDeg: ASSUMED_HFOV_DEG }, transferList);
     });
   }
 
@@ -1894,66 +1893,39 @@
     hideProcError();
     resetStages();
     els.procFooter.style.display = "";
-    els.procFooter.textContent = "Preparando imágenes…";
-    els.procProgressWrap.style.display = "none";
-    els.procProgressFill.style.width = "0%";
-    els.procProgressLabel.textContent = "0%";
+    els.procFooter.textContent = "Preparando fotos…";
     state.panoramaStatus = "loading-engine";
     state.panoramaError = null;
     if (state.panoramaBlobUrl) { URL.revokeObjectURL(state.panoramaBlobUrl); state.panoramaBlobUrl = null; }
 
-    var grouped = { mid: [], top: [], bottom: [], zenith: [], nadir: [] };
-    state.shots.forEach(function (s) { if (grouped[s.ring]) grouped[s.ring].push(s); });
-    var ringOrder = ["mid", "top", "bottom", "zenith", "nadir"];
-    ringOrder.forEach(function (k) { grouped[k].sort(function (a, b) { return a.ringIndex - b.ringIndex; }); });
-
-    if (grouped.mid.length + grouped.top.length + grouped.bottom.length + grouped.zenith.length + grouped.nadir.length < 2) {
+    if (state.shots.length < 2) {
       state.panoramaStatus = "error";
       state.panoramaError = "No hay suficientes fotos capturadas para armar un panorama.";
       showProcError(state.panoramaError);
       return;
     }
 
-    setStage("engine", "active");
-    els.procProgressWrap.style.display = "";
-
-    // La barra de progreso es "mejor esfuerzo": intenta precalentar la
-    // caché HTTP con fetch() para poder mostrar bytes reales, pero si esa
-    // llamada falla (por ejemplo porque docs.opencv.org no manda cabeceras
-    // CORS para fetch(), a diferencia de un <script src>) NO se aborta el
-    // escaneo — el motor se termina de cargar igual dentro del worker vía
-    // importScripts, que no depende de CORS. Solo se pierde el detalle del
-    // progreso en bytes, no la carga en sí.
-    fetchOpenCVSource(function (loaded, total) {
-      var pct = total ? Math.round((loaded / total) * 100) : null;
-      els.procProgressFill.style.width = (pct == null ? 4 : pct) + "%";
-      els.procProgressLabel.textContent = pct == null ? (Math.round(loaded / 1024) + " KB") : (pct + "%");
-    }).catch(function (err) {
-      console.warn("[panorama] no se pudo precalentar el motor con progreso real, se sigue igual:", err);
-      els.procProgressWrap.style.display = "none";
-    }).then(function () {
-      els.procFooter.textContent = "Preparando fotos para coser…";
-      return Promise.all(ringOrder.map(function (k) {
-        return Promise.all(grouped[k].map(function (s) { return loadDownscaledBitmap(s.dataUrl); }));
-      }));
-    }).then(function (results) {
-      var payload = { mid: results[0], top: results[1], bottom: results[2], zenith: results[3], nadir: results[4] };
-      var allBitmaps = [].concat(payload.mid, payload.top, payload.bottom, payload.zenith, payload.nadir);
-      state.panoramaStatus = "stitching";
-      els.procFooter.textContent = "Cosiendo…";
-      return runStitchWorker(payload, allBitmaps);
-    }).then(function (blob) {
-      state.panoramaBlobUrl = URL.createObjectURL(blob);
-      state.panoramaStatus = "success";
-      renderResults();
-      showView("results");
-    }).catch(function (err) {
-      console.error("[panorama]", err);
-      state.panoramaStatus = "error";
-      state.panoramaError = err && err.message ? err.message : "No se pudo armar el panorama.";
-      setStage(err && err.stage ? err.stage : "engine", "error");
-      showProcError(state.panoramaError);
-    });
+    var shotsSnapshot = state.shots.slice();
+    Promise.all(shotsSnapshot.map(function (s) { return loadDownscaledBitmap(s.dataUrl); }))
+      .then(function (bitmaps) {
+        return bitmaps.map(function (bmp, i) { return bitmapToTransferablePhoto(bmp, shotsSnapshot[i]); });
+      })
+      .then(function (photos) {
+        state.panoramaStatus = "stitching";
+        els.procFooter.textContent = "Proyectando fotos…";
+        return runStitchWorker(photos);
+      }).then(function (blob) {
+        state.panoramaBlobUrl = URL.createObjectURL(blob);
+        state.panoramaStatus = "success";
+        renderResults();
+        showView("results");
+      }).catch(function (err) {
+        console.error("[panorama]", err);
+        state.panoramaStatus = "error";
+        state.panoramaError = err && err.message ? err.message : "No se pudo armar el panorama.";
+        setStage(err && err.stage ? err.stage : "mid", "error");
+        showProcError(state.panoramaError);
+      });
   }
 
   els.btnProcess.addEventListener("click", function () {
@@ -1969,6 +1941,7 @@
     renderResults();
     showView("results");
   });
+
 
   // ---------------- 360° tour viewer ----------------
   //
@@ -2126,6 +2099,7 @@
       updateTourView();
     }
   }
+
 
   // ---------------- Etapa 4: visor real con Three.js (esfera equirectangular) ----------------
   //
