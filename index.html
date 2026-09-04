@@ -536,13 +536,35 @@
   .stage-row.done .status-dot { display: none; }
   .check-mark { display: none; color: var(--good); font-weight: 800; }
   .stage-row.done .check-mark { display: block; animation: check-pop 0.4s ease both; }
+  .stage-row.error { background: rgba(255,90,90,0.1); border-color: rgba(255,90,90,0.35); opacity: 1; }
+  .stage-row.error .status-dot { border: none; background: #ff5a5a; animation: none; }
   .proc-footer { font-size: 12px; color: var(--text-faint); }
+
+  .proc-progress-wrap { width: 100%; max-width: 280px; display: flex; align-items: center; gap: 10px; }
+  .proc-progress-track { flex: 1; height: 6px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
+  .proc-progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width 0.15s linear; }
+  .proc-progress-label { font-size: 11.5px; color: var(--text-faint); flex: none; min-width: 32px; text-align: right; }
+
+  .proc-error {
+    width: 100%; max-width: 280px; background: rgba(255,90,90,0.08);
+    border: 1px solid rgba(255,90,90,0.28); border-radius: 14px; padding: 14px 16px;
+  }
+  .proc-error p { font-size: 13px; line-height: 1.5; color: #ffb4b4; margin: 0 0 12px; }
+  .proc-error-actions { display: flex; gap: 10px; }
+  .proc-error-actions button { flex: 1; font-size: 13px; padding: 10px; }
 
   /* ---------- Results ---------- */
 
   #view-results .results-head { text-align: center; margin-top: 6px; }
   #view-results h2 { font-size: 21px; }
   #view-results .sub { margin-top: 6px; font-size: 13.5px; color: var(--text-dim); }
+  #pano-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #pano-stage.dragging #pano-canvas { cursor: grabbing; }
+  .pano-fallback-note {
+    margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--warn);
+    background: rgba(255,180,84,0.1); border: 1px solid rgba(255,180,84,0.25);
+    border-radius: 12px; padding: 9px 13px;
+  }
 
   /* ---------- 360° tour viewer ---------- */
 
@@ -818,24 +840,40 @@
             <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4.1" stroke="currentColor" stroke-width="1.6"/><path d="M4 8V6a2 2 0 0 1 2-2h2M18 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M6 20H4a2 2 0 0 1-2-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           </div>
           <div>
-            <h2>Analizando tu habitación</h2>
-            <p class="sub">Esto toma solo unos segundos</p>
+            <h2>Armando el panorama</h2>
+            <p class="sub">Esto puede tardar según tu conexión y el celular</p>
           </div>
           <div class="stage-list" id="stage-list">
-            <div class="stage-row pending" data-stage="0">
-              <span class="name">Organizando capturas</span>
+            <div class="stage-row pending" data-stage="engine">
+              <span class="name">Descargando motor de stitching</span>
               <span class="status-dot"></span><span class="check-mark">✓</span>
             </div>
-            <div class="stage-row pending" data-stage="1">
-              <span class="name">Analizando diferentes ángulos</span>
+            <div class="stage-row pending" data-stage="mid">
+              <span class="name">Cosiendo anillo medio</span>
               <span class="status-dot"></span><span class="check-mark">✓</span>
             </div>
-            <div class="stage-row pending" data-stage="2">
-              <span class="name">Reconociendo el espacio</span>
+            <div class="stage-row pending" data-stage="edges">
+              <span class="name">Cosiendo anillos superior e inferior</span>
+              <span class="status-dot"></span><span class="check-mark">✓</span>
+            </div>
+            <div class="stage-row pending" data-stage="union">
+              <span class="name">Uniendo todo en un panorama</span>
               <span class="status-dot"></span><span class="check-mark">✓</span>
             </div>
           </div>
-          <p class="proc-footer">Preparando resultado…</p>
+          <div class="proc-progress-wrap" id="proc-progress-wrap" style="display:none;">
+            <div class="proc-progress-track"><div class="proc-progress-fill" id="proc-progress-fill"></div></div>
+            <span class="proc-progress-label" id="proc-progress-label">0%</span>
+          </div>
+          <p class="proc-footer" id="proc-footer">Preparando…</p>
+
+          <div class="proc-error" id="proc-error" style="display:none;">
+            <p id="proc-error-text"></p>
+            <div class="proc-error-actions">
+              <button class="btn-secondary" id="btn-proc-retry">Reintentar</button>
+              <button class="btn-primary" id="btn-proc-skip">Ver fotos igual</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -848,9 +886,27 @@
           </div>
 
           <div class="tour-wrap">
+            <!-- Etapa 4: real panorama viewer (Three.js sphere, equirectangular
+                 texture from the OpenCV.js stitch). Primary when stitching
+                 succeeded. -->
+            <div class="tour-stage" id="pano-stage" style="display:none;">
+              <canvas id="pano-canvas"></canvas>
+              <div class="tour-vignette"></div>
+              <div class="tour-heading">
+                <span class="badge">Panorama 360°</span>
+              </div>
+              <div class="tour-hint" id="pano-hint">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M4 12h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Arrastrá para girar · pellizcá para zoom
+              </div>
+            </div>
+            <p class="pano-fallback-note" id="pano-fallback-note" style="display:none;">
+              No se pudo armar el panorama unido: te mostramos el recorrido por foto más cercana en su lugar.
+            </p>
+            <!-- Fallback: cross-fade between the nearest original photo.
+                 Two stacked layers cross-fade between shots; nothing here
+                 is stitched pixel data, each layer is one original photo. -->
             <div class="tour-stage" id="tour-stage">
-              <!-- Two stacked layers cross-fade between shots; nothing here
-                   is stitched pixel data, each layer is one original photo. -->
               <div class="tour-layer" id="tour-layer-a"><img alt="" draggable="false"></div>
               <div class="tour-layer" id="tour-layer-b"><img alt="" draggable="false"></div>
               <div class="tour-vignette"></div>
@@ -964,7 +1020,12 @@
     smoothYaw: 0,
     smoothPitch: 0,
     smoothInit: false,
-    capturing: false
+    capturing: false,
+    // Etapa 3: real panorama stitching (OpenCV.js in a Web Worker).
+    panoramaStatus: "idle", // idle | loading-engine | stitching | success | error
+    panoramaBlobUrl: null,
+    panoramaError: null,
+    panoramaWorker: null
   };
 
   // Smoothing factor for the live orientation reading (0-1, higher = snappier).
@@ -983,8 +1044,11 @@
    "btn-retry-camera","btn-demo-fallback","btn-exit-scan",
    "exit-confirm-overlay","exit-confirm-text","btn-exit-cancel","btn-exit-confirm",
    "complete-icon","complete-title","complete-sub","ring-warning","btn-process","btn-resume-scan","btn-discard-scan",
-   "stage-list","results-sub","btn-new-scan","btn-home",
+   "stage-list","proc-progress-wrap","proc-progress-fill","proc-progress-label","proc-footer",
+   "proc-error","proc-error-text","btn-proc-retry","btn-proc-skip",
+   "results-sub","btn-new-scan","btn-home",
    "tour-stage","tour-layer-a","tour-layer-b","tour-label","tour-dots","tour-hint","btn-view-photos",
+   "pano-stage","pano-canvas","pano-hint","pano-fallback-note",
    "lightbox","lb-position","lb-img","lb-caption","lb-prev","lb-next","btn-lb-close","canvas"
   ].forEach(function (id) { els[id.replace(/-([a-z])/g, function(_,c){return c.toUpperCase();})] = document.getElementById(id); });
 
@@ -1483,6 +1547,17 @@
     state.capturing = false;
     els.thumb.classList.add("empty");
     els.thumb.innerHTML = "<span>Sin capturas</span>";
+    if (state.panoramaWorker) {
+      try { state.panoramaWorker.terminate(); } catch (e) {}
+      state.panoramaWorker = null;
+    }
+    if (state.panoramaBlobUrl) {
+      URL.revokeObjectURL(state.panoramaBlobUrl);
+      state.panoramaBlobUrl = null;
+    }
+    state.panoramaStatus = "idle";
+    state.panoramaError = null;
+    stopPano3DLoop();
   }
 
   function finishScan() {
@@ -1539,27 +1614,332 @@
     discardScan();
   });
 
-  // ---------------- Processing ----------------
+  // ---------------- Etapa 3: stitching real con OpenCV.js en un Web Worker ----------------
+  //
+  // No hay backend: OpenCV.js se descarga lazy desde su CDN oficial (con
+  // barra de progreso real por bytes) recién cuando el usuario aprieta
+  // "Procesar", y todo el trabajo pesado corre en un Web Worker armado con
+  // un Blob URL (no hay un .js aparte para no romper el esquema de archivo
+  // único). Estrategia por partes: se cose primero cada anillo (medio,
+  // superior, inferior) por separado y recién después se unen esos paneles
+  // más el cenit/nadir en un solo panorama, para no acumular de golpe 30
+  // Mats de alta resolución en memoria. Si el stitching falla o no hay
+  // suficientes fotos, NO se inventa ni se simula ningún panorama: se
+  // muestra el error tal cual y queda disponible el visor por foto más
+  // cercana (el de la Etapa 1) como fallback.
+
+  var CV_BASE = "https://docs.opencv.org/4.9.0/";
+  var CV_URL = CV_BASE + "opencv.js";
+  var STITCH_MAX_DIM = 2000; // lado largo, en px, de las fotos que se cosen (las originales no se tocan)
+
+  var WORKER_SRC = [
+    '"use strict";',
+    'var CV_BASE = ' + JSON.stringify(CV_BASE) + ';',
+    '// Emscripten resuelve el .wasm relativo a self.location cuando está',
+    '// disponible importScripts, lo cual en un worker armado desde un Blob',
+    '// URL apuntaría mal — por eso se fija locateFile a mano.',
+    'self.Module = { locateFile: function (p) { return CV_BASE + p; } };',
+    'importScripts(' + JSON.stringify(CV_URL) + ');',
+    '',
+    'function matFromBitmap(bitmap) {',
+    '  var canvas = new OffscreenCanvas(bitmap.width, bitmap.height);',
+    '  var ctx = canvas.getContext("2d");',
+    '  ctx.drawImage(bitmap, 0, 0);',
+    '  var imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);',
+    '  return cv.matFromImageData(imgData);',
+    '}',
+    '',
+    'function stitchMats(mats) {',
+    '  var vec = new cv.MatVector();',
+    '  for (var i = 0; i < mats.length; i++) vec.push_back(mats[i]);',
+    '  var stitcher = cv.Stitcher.create(cv.Stitcher.PANORAMA);',
+    '  try { if (stitcher.setPanoConfidenceThresh) stitcher.setPanoConfidenceThresh(0.6); } catch (e) {}',
+    '  var result = new cv.Mat();',
+    '  var status = stitcher.stitch(vec, result);',
+    '  vec.delete();',
+    '  stitcher.delete();',
+    '  if (status !== 0) {',
+    '    result.delete();',
+    '    var err = new Error("stitch-status-" + status);',
+    '    err.stitchStatus = status;',
+    '    throw err;',
+    '  }',
+    '  return result;',
+    '}',
+    '',
+    'function stitchRing(bitmaps) {',
+    '  if (!bitmaps || !bitmaps.length) return null;',
+    '  if (bitmaps.length === 1) return matFromBitmap(bitmaps[0]);',
+    '  var mats = bitmaps.map(matFromBitmap);',
+    '  var pano = stitchMats(mats);',
+    '  mats.forEach(function (m) { m.delete(); });',
+    '  return pano;',
+    '}',
+    '',
+    'function matToBlob(mat) {',
+    '  var canvas = new OffscreenCanvas(mat.cols, mat.rows);',
+    '  cv.imshow(canvas, mat);',
+    '  return canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 });',
+    '}',
+    '',
+    'function waitForCv() {',
+    '  return new Promise(function (resolve) {',
+    '    if (cv.Mat) { resolve(); return; }',
+    '    cv["onRuntimeInitialized"] = resolve;',
+    '  });',
+    '}',
+    '',
+    'self.onmessage = function (e) {',
+    '  if (e.data.cmd !== "run") return;',
+    '  var rings = e.data.rings;',
+    '  waitForCv().then(function () {',
+    '    if (typeof cv.Stitcher === "undefined") {',
+    '      self.postMessage({ type: "error", message: "Este build de OpenCV.js no incluye el módulo de stitching." });',
+    '      return;',
+    '    }',
+    '    self.postMessage({ type: "engine-ready" });',
+    '    var panels = [];',
+    '    try {',
+    '      self.postMessage({ type: "stage", stage: "mid", status: "active" });',
+    '      var midPanel = stitchRing(rings.mid);',
+    '      if (midPanel) panels.push(midPanel);',
+    '      self.postMessage({ type: "stage", stage: "mid", status: "done" });',
+    '',
+    '      self.postMessage({ type: "stage", stage: "edges", status: "active" });',
+    '      var topPanel = stitchRing(rings.top);',
+    '      if (topPanel) panels.push(topPanel);',
+    '      var bottomPanel = stitchRing(rings.bottom);',
+    '      if (bottomPanel) panels.push(bottomPanel);',
+    '      if (rings.zenith && rings.zenith.length) panels.push(matFromBitmap(rings.zenith[0]));',
+    '      if (rings.nadir && rings.nadir.length) panels.push(matFromBitmap(rings.nadir[0]));',
+    '      self.postMessage({ type: "stage", stage: "edges", status: "done" });',
+    '',
+    '      self.postMessage({ type: "stage", stage: "union", status: "active" });',
+    '      if (panels.length < 2) { throw new Error("not-enough-panels"); }',
+    '      var finalMat = stitchMats(panels);',
+    '      panels.forEach(function (m) { m.delete(); });',
+    '      panels = [];',
+    '      matToBlob(finalMat).then(function (blob) {',
+    '        finalMat.delete();',
+    '        self.postMessage({ type: "stage", stage: "union", status: "done" });',
+    '        self.postMessage({ type: "done", blob: blob });',
+    '      }).catch(function (err) {',
+    '        finalMat.delete();',
+    '        self.postMessage({ type: "error", stage: "union", message: String(err && err.message || err) });',
+    '      });',
+    '    } catch (err) {',
+    '      panels.forEach(function (m) { try { m.delete(); } catch (e2) {} });',
+    '      var stageGuess = err && err.message === "not-enough-panels" ? "union" : undefined;',
+    '      self.postMessage({ type: "error", stage: stageGuess, message: String(err && err.message || err), stitchStatus: err && err.stitchStatus });',
+    '    }',
+    '  });',
+    '};'
+  ].join("\n");
+
+  function buildStitchWorker() {
+    var blob = new Blob([WORKER_SRC], { type: "application/javascript" });
+    var url = URL.createObjectURL(blob);
+    var worker = new Worker(url);
+    URL.revokeObjectURL(url);
+    return worker;
+  }
+
+  // Pre-calienta la caché HTTP del navegador con progreso real por bytes;
+  // el importScripts() del worker después reutiliza esa misma respuesta
+  // cacheada en vez de bajarla de nuevo (depende de que el CDN permita
+  // cachear la URL, que es lo normal para un asset versionado).
+  function fetchOpenCVSource(onProgress) {
+    return fetch(CV_URL, { cache: "force-cache" }).then(function (res) {
+      if (!res.ok) throw new Error("No se pudo descargar el motor de stitching (HTTP " + res.status + ").");
+      var total = Number(res.headers.get("content-length")) || 0;
+      var loaded = 0;
+      if (!res.body || !res.body.getReader) { onProgress(0, 0); return res.blob().then(function () {}); }
+      var reader = res.body.getReader();
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) { onProgress(loaded, total || loaded); return; }
+          loaded += r.value.length;
+          onProgress(loaded, total);
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (err) {
+      // Un TypeError "Failed to fetch" es señal de red (sin conexión, CDN
+      // inalcanzable) — se traduce a un mensaje entendible en vez de
+      // mostrar el texto técnico del navegador.
+      if (err instanceof Error && /fetch/i.test(err.message) && !/motor de stitching/.test(err.message)) {
+        throw new Error("No se pudo conectar con el motor de stitching (revisá tu conexión a internet).");
+      }
+      throw err;
+    });
+  }
+
+  function loadDownscaledBitmap(dataUrl) {
+    return fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+      return createImageBitmap(blob).then(function (full) {
+        var w = full.width, h = full.height;
+        var longSide = Math.max(w, h);
+        if (longSide <= STITCH_MAX_DIM) return full;
+        var scale = STITCH_MAX_DIM / longSide;
+        var opts = { resizeQuality: "high" };
+        if (w >= h) opts.resizeWidth = Math.round(w * scale);
+        else opts.resizeHeight = Math.round(h * scale);
+        return createImageBitmap(full, opts).then(function (small) { full.close(); return small; });
+      });
+    });
+  }
+
+  function describeStitchError(msg) {
+    if (msg.message === "not-enough-panels") return "No hay suficientes fotos para armar un panorama (faltan anillos completos).";
+    var codes = {
+      1: "Faltan imágenes o se solapan muy poco entre sí para encontrar coincidencias.",
+      2: "No se pudo estimar cómo encajan las fotos: puede que no tengan suficiente solapamiento o textura.",
+      3: "No se pudieron ajustar los parámetros de cámara al unir las fotos."
+    };
+    if (msg.stitchStatus != null && codes[msg.stitchStatus]) return codes[msg.stitchStatus];
+    if (msg.message && /módulo de stitching/.test(msg.message)) return msg.message;
+    return "No se pudo terminar el panorama (" + (msg.message || "error desconocido") + ").";
+  }
+
+  function setStage(key, status) {
+    var row = els.stageList.querySelector('.stage-row[data-stage="' + key + '"]');
+    if (!row) return;
+    row.classList.remove("active", "done", "pending", "error");
+    row.classList.add(status);
+  }
+  function resetStages() {
+    var rows = els.stageList.querySelectorAll(".stage-row");
+    rows.forEach(function (r) { r.classList.remove("active", "done", "error"); r.classList.add("pending"); });
+  }
+  function showProcError(text) {
+    els.procError.style.display = "";
+    els.procErrorText.textContent = text;
+    els.procFooter.style.display = "none";
+    els.procProgressWrap.style.display = "none";
+  }
+  function hideProcError() {
+    els.procError.style.display = "none";
+  }
+
+  function runStitchWorker(payload, allBitmaps) {
+    return new Promise(function (resolve, reject) {
+      var worker;
+      try {
+        worker = buildStitchWorker();
+      } catch (e) {
+        var startErr = new Error("No se pudo iniciar el proceso de stitching en este navegador.");
+        startErr.stage = "engine";
+        reject(startErr);
+        return;
+      }
+      state.panoramaWorker = worker;
+      var settled = false;
+      worker.onmessage = function (e) {
+        var msg = e.data;
+        if (msg.type === "stage") {
+          setStage(msg.stage, msg.status);
+          if (msg.status === "active") {
+            var labels = { mid: "Cosiendo anillo medio…", edges: "Cosiendo anillos superior e inferior…", union: "Uniendo el panorama…" };
+            els.procFooter.textContent = labels[msg.stage] || "Procesando…";
+          }
+        } else if (msg.type === "done") {
+          settled = true;
+          worker.terminate();
+          state.panoramaWorker = null;
+          resolve(msg.blob);
+        } else if (msg.type === "error") {
+          settled = true;
+          worker.terminate();
+          state.panoramaWorker = null;
+          var err = new Error(describeStitchError(msg));
+          err.stage = msg.stage;
+          reject(err);
+        }
+      };
+      worker.onerror = function (e) {
+        if (settled) return;
+        settled = true;
+        try { worker.terminate(); } catch (e2) {}
+        state.panoramaWorker = null;
+        var err = new Error("Error del motor de stitching: " + (e.message || "desconocido") + ".");
+        err.stage = "engine";
+        reject(err);
+      };
+      worker.postMessage({ cmd: "run", rings: payload }, allBitmaps);
+    });
+  }
+
+  function runPanoramaPipeline() {
+    hideProcError();
+    resetStages();
+    els.procFooter.style.display = "";
+    els.procFooter.textContent = "Preparando imágenes…";
+    els.procProgressWrap.style.display = "none";
+    els.procProgressFill.style.width = "0%";
+    els.procProgressLabel.textContent = "0%";
+    state.panoramaStatus = "loading-engine";
+    state.panoramaError = null;
+    if (state.panoramaBlobUrl) { URL.revokeObjectURL(state.panoramaBlobUrl); state.panoramaBlobUrl = null; }
+
+    var grouped = { mid: [], top: [], bottom: [], zenith: [], nadir: [] };
+    state.shots.forEach(function (s) { if (grouped[s.ring]) grouped[s.ring].push(s); });
+    var ringOrder = ["mid", "top", "bottom", "zenith", "nadir"];
+    ringOrder.forEach(function (k) { grouped[k].sort(function (a, b) { return a.ringIndex - b.ringIndex; }); });
+
+    if (grouped.mid.length + grouped.top.length + grouped.bottom.length + grouped.zenith.length + grouped.nadir.length < 2) {
+      state.panoramaStatus = "error";
+      state.panoramaError = "No hay suficientes fotos capturadas para armar un panorama.";
+      showProcError(state.panoramaError);
+      return;
+    }
+
+    setStage("engine", "active");
+    els.procProgressWrap.style.display = "";
+
+    fetchOpenCVSource(function (loaded, total) {
+      var pct = total ? Math.round((loaded / total) * 100) : null;
+      els.procProgressFill.style.width = (pct == null ? 4 : pct) + "%";
+      els.procProgressLabel.textContent = pct == null ? (Math.round(loaded / 1024) + " KB") : (pct + "%");
+    }).then(function () {
+      setStage("engine", "done");
+      els.procProgressWrap.style.display = "none";
+      els.procFooter.textContent = "Preparando fotos para coser…";
+      return Promise.all(ringOrder.map(function (k) {
+        return Promise.all(grouped[k].map(function (s) { return loadDownscaledBitmap(s.dataUrl); }));
+      }));
+    }).then(function (results) {
+      var payload = { mid: results[0], top: results[1], bottom: results[2], zenith: results[3], nadir: results[4] };
+      var allBitmaps = [].concat(payload.mid, payload.top, payload.bottom, payload.zenith, payload.nadir);
+      state.panoramaStatus = "stitching";
+      els.procFooter.textContent = "Cosiendo…";
+      return runStitchWorker(payload, allBitmaps);
+    }).then(function (blob) {
+      state.panoramaBlobUrl = URL.createObjectURL(blob);
+      state.panoramaStatus = "success";
+      renderResults();
+      showView("results");
+    }).catch(function (err) {
+      console.error("[panorama]", err);
+      state.panoramaStatus = "error";
+      state.panoramaError = err && err.message ? err.message : "No se pudo armar el panorama.";
+      setStage(err && err.stage ? err.stage : "engine", "error");
+      showProcError(state.panoramaError);
+    });
+  }
 
   els.btnProcess.addEventListener("click", function () {
     showView("processing");
-    var rows = els.stageList.querySelectorAll(".stage-row");
-    rows.forEach(function (r) { r.classList.remove("active","done"); r.classList.add("pending"); });
-    rows.forEach(function (row, i) {
-      setTimeout(function () {
-        rows.forEach(function(r){ r.classList.remove("active"); });
-        row.classList.remove("pending");
-        row.classList.add("active");
-      }, 750 * i + 150);
-      setTimeout(function () {
-        row.classList.remove("active");
-        row.classList.add("done");
-      }, 750 * (i + 1));
-    });
-    setTimeout(function () {
-      renderResults();
-      showView("results");
-    }, 750 * rows.length + 650);
+    runPanoramaPipeline();
+  });
+  els.btnProcRetry.addEventListener("click", function () {
+    runPanoramaPipeline();
+  });
+  els.btnProcSkip.addEventListener("click", function () {
+    // El usuario elige seguir sin panorama unido: el resultado usa el
+    // visor por foto más cercana (fallback), nunca uno inventado.
+    renderResults();
+    showView("results");
   });
 
   // ---------------- 360° tour viewer ----------------
@@ -1700,7 +2080,188 @@
     els.tourHint.classList.remove("hide");
     buildTourDots();
     bindTourEvents();
-    updateTourView();
+
+    var showPano = state.panoramaStatus === "success" && !!state.panoramaBlobUrl;
+    els.panoStage.style.display = showPano ? "" : "none";
+    els.tourStage.style.display = showPano ? "none" : "";
+    if (!showPano && state.panoramaStatus === "error") {
+      els.panoFallbackNote.style.display = "";
+      els.panoFallbackNote.textContent = "No se pudo armar el panorama unido: te mostramos el recorrido por foto más cercana en su lugar.";
+    } else {
+      els.panoFallbackNote.style.display = "none";
+    }
+
+    if (showPano) {
+      stopPano3DLoop();
+      initPanoViewer(state.panoramaBlobUrl);
+    } else {
+      updateTourView();
+    }
+  }
+
+  // ---------------- Etapa 4: visor real con Three.js (esfera equirectangular) ----------------
+  //
+  // Solo se usa cuando el stitching de la Etapa 3 terminó bien: una esfera
+  // vista desde adentro (scale.x = -1) con la textura del panorama cosido.
+  // El visor viejo de cross-fade por foto más cercana queda como fallback
+  // (se sigue usando si el stitching falló, o si Three.js no carga).
+
+  var threeLoadPromise = null;
+  function loadThree() {
+    if (window.THREE) return Promise.resolve();
+    if (threeLoadPromise) return threeLoadPromise;
+    threeLoadPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js";
+      s.onload = function () { resolve(); };
+      s.onerror = function () { reject(new Error("No se pudo cargar el visor 3D.")); };
+      document.head.appendChild(s);
+    });
+    return threeLoadPromise;
+  }
+
+  var pano3d = {
+    renderer: null, scene: null, camera: null, mesh: null, texture: null,
+    fov: 75, yaw: 0, pitch: 0,
+    dragging: false, pointerId: null,
+    startX: 0, startY: 0, startYaw: 0, startPitch: 0,
+    pinchStartDist: 0, pinchStartFov: 75,
+    raf: null, bound: false
+  };
+  var PANO_YAW_PER_PX = 0.25, PANO_PITCH_PER_PX = 0.2;
+
+  function initPanoViewer(blobUrl) {
+    loadThree().then(function () {
+      setupPano3D(blobUrl);
+    }).catch(function (err) {
+      // Three.js no cargó (por ejemplo, sin conexión al CDN) — nunca se
+      // inventa un visor: se cae al recorrido por foto más cercana.
+      els.panoStage.style.display = "none";
+      els.tourStage.style.display = "";
+      els.panoFallbackNote.style.display = "";
+      els.panoFallbackNote.textContent = err.message || "No se pudo cargar el visor 3D.";
+      updateTourView();
+    });
+  }
+
+  function setupPano3D(blobUrl) {
+    var canvas = els.panoCanvas;
+    var rect = els.panoStage.getBoundingClientRect();
+    var width = rect.width || 360, height = rect.height || 480;
+
+    if (!pano3d.renderer) {
+      pano3d.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+      pano3d.scene = new THREE.Scene();
+      pano3d.camera = new THREE.PerspectiveCamera(pano3d.fov, width / height, 0.1, 10);
+      var geometry = new THREE.SphereGeometry(5, 60, 40);
+      geometry.scale(-1, 1, 1); // cámara adentro de la esfera, mirando hacia la textura
+      var material = new THREE.MeshBasicMaterial();
+      pano3d.mesh = new THREE.Mesh(geometry, material);
+      pano3d.scene.add(pano3d.mesh);
+      bindPano3DEvents();
+    }
+    pano3d.renderer.setSize(width, height, false);
+    pano3d.camera.aspect = width / height;
+    pano3d.camera.updateProjectionMatrix();
+
+    var loader = new THREE.TextureLoader();
+    loader.load(blobUrl, function (tex) {
+      if (pano3d.texture) pano3d.texture.dispose();
+      if (tex.colorSpace !== undefined) tex.colorSpace = THREE.SRGBColorSpace;
+      pano3d.texture = tex;
+      pano3d.mesh.material.map = tex;
+      pano3d.mesh.material.needsUpdate = true;
+      pano3d.yaw = 0;
+      pano3d.pitch = 0;
+      pano3d.fov = 75;
+      startPano3DLoop();
+    }, undefined, function () {
+      els.panoStage.style.display = "none";
+      els.tourStage.style.display = "";
+      els.panoFallbackNote.style.display = "";
+      els.panoFallbackNote.textContent = "No se pudo cargar la textura del panorama.";
+      updateTourView();
+    });
+  }
+
+  function startPano3DLoop() {
+    if (pano3d.raf) return;
+    function tick() {
+      pano3d.camera.rotation.order = "YXZ";
+      pano3d.camera.rotation.y = THREE.MathUtils.degToRad(pano3d.yaw);
+      pano3d.camera.rotation.x = THREE.MathUtils.degToRad(pano3d.pitch);
+      if (pano3d.camera.fov !== pano3d.fov) {
+        pano3d.camera.fov = pano3d.fov;
+        pano3d.camera.updateProjectionMatrix();
+      }
+      pano3d.renderer.render(pano3d.scene, pano3d.camera);
+      pano3d.raf = requestAnimationFrame(tick);
+    }
+    tick();
+  }
+  function stopPano3DLoop() {
+    if (pano3d.raf) { cancelAnimationFrame(pano3d.raf); pano3d.raf = null; }
+  }
+
+  function touchDist(touches) {
+    var dx = touches[0].clientX - touches[1].clientX;
+    var dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function bindPano3DEvents() {
+    if (pano3d.bound) return;
+    pano3d.bound = true;
+    var stage = els.panoStage;
+
+    stage.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      pano3d.dragging = true;
+      pano3d.pointerId = e.pointerId;
+      pano3d.startX = e.clientX; pano3d.startY = e.clientY;
+      pano3d.startYaw = pano3d.yaw; pano3d.startPitch = pano3d.pitch;
+      stage.classList.add("dragging");
+      stage.setPointerCapture(e.pointerId);
+    });
+    stage.addEventListener("pointermove", function (e) {
+      if (!pano3d.dragging || e.pointerId !== pano3d.pointerId) return;
+      var dx = e.clientX - pano3d.startX, dy = e.clientY - pano3d.startY;
+      pano3d.yaw = pano3d.startYaw - dx * PANO_YAW_PER_PX;
+      pano3d.pitch = Math.max(-89, Math.min(89, pano3d.startPitch - dy * PANO_PITCH_PER_PX));
+    });
+    function endDrag(e) {
+      if (e.pointerId !== pano3d.pointerId) return;
+      pano3d.dragging = false;
+      pano3d.pointerId = null;
+      stage.classList.remove("dragging");
+    }
+    stage.addEventListener("pointerup", endDrag);
+    stage.addEventListener("pointercancel", endDrag);
+
+    // Pinch-to-zoom (dos dedos) por eventos touch nativos, aparte del drag
+    // de un dedo de arriba que ya cubre pointer events.
+    stage.addEventListener("touchstart", function (e) {
+      if (e.touches.length === 2) {
+        pano3d.pinchStartDist = touchDist(e.touches);
+        pano3d.pinchStartFov = pano3d.fov;
+      }
+    }, { passive: true });
+    stage.addEventListener("touchmove", function (e) {
+      if (e.touches.length === 2 && pano3d.pinchStartDist > 0) {
+        var dist = touchDist(e.touches);
+        var ratio = pano3d.pinchStartDist / dist;
+        pano3d.fov = Math.max(35, Math.min(100, pano3d.pinchStartFov * ratio));
+      }
+    }, { passive: true });
+
+    window.addEventListener("resize", function () {
+      if (!pano3d.renderer || els.panoStage.style.display === "none") return;
+      var r = els.panoStage.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      pano3d.renderer.setSize(r.width, r.height, false);
+      pano3d.camera.aspect = r.width / r.height;
+      pano3d.camera.updateProjectionMatrix();
+    });
   }
 
   var lbIndex = 0;
