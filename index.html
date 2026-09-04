@@ -1835,9 +1835,26 @@
       }
       state.panoramaWorker = worker;
       var settled = false;
+      // El worker hace su propio importScripts(opencv.js) — eso no depende
+      // de CORS (a diferencia del fetch() de arriba, que es solo cosmético
+      // para la barra de progreso). Si nunca contesta nada, es la única
+      // señal real de que la carga del motor se colgó.
+      var engineTimeout = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        try { worker.terminate(); } catch (e2) {}
+        state.panoramaWorker = null;
+        var err = new Error("El motor de stitching tardó demasiado en responder (puede que no esté disponible desde acá).");
+        err.stage = "engine";
+        reject(err);
+      }, 45000);
+
       worker.onmessage = function (e) {
         var msg = e.data;
-        if (msg.type === "stage") {
+        if (msg.type === "engine-ready") {
+          setStage("engine", "done");
+          els.procProgressWrap.style.display = "none";
+        } else if (msg.type === "stage") {
           setStage(msg.stage, msg.status);
           if (msg.status === "active") {
             var labels = { mid: "Cosiendo anillo medio…", edges: "Cosiendo anillos superior e inferior…", union: "Uniendo el panorama…" };
@@ -1845,21 +1862,24 @@
           }
         } else if (msg.type === "done") {
           settled = true;
+          clearTimeout(engineTimeout);
           worker.terminate();
           state.panoramaWorker = null;
           resolve(msg.blob);
         } else if (msg.type === "error") {
           settled = true;
+          clearTimeout(engineTimeout);
           worker.terminate();
           state.panoramaWorker = null;
           var err = new Error(describeStitchError(msg));
-          err.stage = msg.stage;
+          err.stage = msg.stage || "engine";
           reject(err);
         }
       };
       worker.onerror = function (e) {
         if (settled) return;
         settled = true;
+        clearTimeout(engineTimeout);
         try { worker.terminate(); } catch (e2) {}
         state.panoramaWorker = null;
         var err = new Error("Error del motor de stitching: " + (e.message || "desconocido") + ".");
@@ -1897,13 +1917,21 @@
     setStage("engine", "active");
     els.procProgressWrap.style.display = "";
 
+    // La barra de progreso es "mejor esfuerzo": intenta precalentar la
+    // caché HTTP con fetch() para poder mostrar bytes reales, pero si esa
+    // llamada falla (por ejemplo porque docs.opencv.org no manda cabeceras
+    // CORS para fetch(), a diferencia de un <script src>) NO se aborta el
+    // escaneo — el motor se termina de cargar igual dentro del worker vía
+    // importScripts, que no depende de CORS. Solo se pierde el detalle del
+    // progreso en bytes, no la carga en sí.
     fetchOpenCVSource(function (loaded, total) {
       var pct = total ? Math.round((loaded / total) * 100) : null;
       els.procProgressFill.style.width = (pct == null ? 4 : pct) + "%";
       els.procProgressLabel.textContent = pct == null ? (Math.round(loaded / 1024) + " KB") : (pct + "%");
-    }).then(function () {
-      setStage("engine", "done");
+    }).catch(function (err) {
+      console.warn("[panorama] no se pudo precalentar el motor con progreso real, se sigue igual:", err);
       els.procProgressWrap.style.display = "none";
+    }).then(function () {
       els.procFooter.textContent = "Preparando fotos para coser…";
       return Promise.all(ringOrder.map(function (k) {
         return Promise.all(grouped[k].map(function (s) { return loadDownscaledBitmap(s.dataUrl); }));
