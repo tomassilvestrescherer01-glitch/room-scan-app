@@ -1,13 +1,16 @@
 @echo off
 REM Wrapper para el Programador de tareas de Windows.
-REM Ajustá las dos rutas de abajo a donde tengas el proyecto y tu Python.
+REM Ajustá la ruta de abajo a donde tengas el proyecto.
+REM Usa confirmar_y_facturar.py: antes de facturar muestra un cartel
+REM preguntando si confirmás. Para que se vea, la tarea programada
+REM tiene que correr con la sesión de Windows iniciada (no "en segundo
+REM plano sin que nadie esté logueado").
 
 set PROYECTO_DIR=C:\ruta\a\arca-facturacion
-set PYTHON_EXE=C:\ruta\a\python.exe
 
-REM Por defecto factura en PRODUCCIÓN. No tocar esta línea hasta haber
-REM probado todo en homologación y haber pasado al certificado real.
-set ARCA_CONFIG=%PROYECTO_DIR%\config\config.produccion.ini
+REM Cuando pasen a producción (certificado real + categoría resuelta),
+REM cambiar esta línea a config.produccion.ini.
+set ARCA_CONFIG=%PROYECTO_DIR%\config\config.homologacion.ini
 
 cd /d "%PROYECTO_DIR%"
-"%PYTHON_EXE%" emitir_factura_prueba.py >> "%PROYECTO_DIR%\scheduler\log.txt" 2>&1
+py confirmar_y_facturar.py >> "%PROYECTO_DIR%\scheduler\log.txt" 2>&1

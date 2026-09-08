@@ -244,16 +244,39 @@ homologación.**
 
 ## 7. Programar en el Task Scheduler de Windows (miércoles a la noche)
 
-1. Editá `scheduler/facturar_semanal.bat` y poné las rutas reales de
-   `PROYECTO_DIR` y `PYTHON_EXE` (la del venv:
-   `...\arca-facturacion\.venv\Scripts\python.exe`).
-2. Confirmá que `ARCA_CONFIG` dentro del `.bat` apunte a
-   `config.produccion.ini` (el `.bat` ya viene así, pero
-   fijate cuando lo edites).
+Hay dos scripts posibles para programar:
+
+- **`emitir_factura_prueba.py`** — factura directo, sin preguntar nada.
+- **`confirmar_y_facturar.py`** — antes de facturar, muestra un cartel en
+  pantalla preguntando "¿Facturar esta semana?" (Sí/No). Si no contestás
+  en 30 minutos, se cancela sola y no factura. Pensado para cuando algún
+  miércoles no querés que salga la factura, sin tener que tocar nada de
+  la configuración.
+
+El `.bat` de este repo ya viene armado con `confirmar_y_facturar.py`. Si
+preferís que factura directo sin preguntar, cambiá esa línea del `.bat`
+por `emitir_factura_prueba.py`.
+
+**Importante si usás `confirmar_y_facturar.py`**: el cartel solo se ve si
+hay una sesión de Windows con pantalla iniciada en ese momento. Si la PC
+está apagada o sin nadie logueado, la tarea no va a poder mostrar nada
+(y por seguridad, tampoco va a facturar).
+
+1. Editá `scheduler/facturar_semanal.bat` y poné la ruta real de
+   `PROYECTO_DIR`.
+2. Confirmá que `ARCA_CONFIG` dentro del `.bat` apunte al config que
+   corresponda (`config.homologacion.ini` mientras prueban,
+   `config.produccion.ini` cuando ya esté todo resuelto para pasar a
+   producción).
 3. Abrí **"Programador de tareas"** (Task Scheduler) → *Crear tarea*
    (no "tarea básica", para tener más control):
-   - **General**: nombre "Factura semanal monotributo". Marcá "Ejecutar
-     tanto si el usuario inició sesión como si no".
+   - **General**: nombre "Factura semanal monotributo".
+     - Si usás `confirmar_y_facturar.py` (el cartel de confirmación):
+       **NO marques** "Ejecutar tanto si el usuario inició sesión como
+       si no" — dejala en "Ejecutar solo cuando el usuario haya iniciado
+       sesión", para que el cartel se vea en pantalla.
+     - Si usás `emitir_factura_prueba.py` (factura directo, sin cartel):
+       marcá "Ejecutar tanto si el usuario inició sesión como si no".
    - **Desencadenadores** → Nuevo: Semanal, día **miércoles**, hora que
      prefieras a la noche (p. ej. 22:00).
    - **Acciones** → Nueva → Iniciar un programa → Programa/script:
@@ -261,7 +284,9 @@ homologación.**
    - **Condiciones**: si la PC puede estar apagada/en reposo un
      miércoles a la noche, desmarcá "Iniciar la tarea solo si el equipo
      está conectado a la corriente" y considerá "Reactivar el equipo
-     para ejecutar esta tarea" si el equipo se suspende.
+     para ejecutar esta tarea" si el equipo se suspende (esto último no
+     sirve de mucho si necesitás que alguien esté para confirmar el
+     cartel).
 4. Guardá y probá con **clic derecho → Ejecutar** una vez, y revisá
    `scheduler/log.txt` para confirmar que salió bien.
 
