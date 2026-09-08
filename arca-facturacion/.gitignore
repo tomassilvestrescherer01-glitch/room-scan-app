@@ -1,0 +1,20 @@
+# Nunca se sube la clave privada, el certificado ni ningún dato de acceso.
+certs/*
+!certs/.gitkeep
+
+cache/*
+!cache/.gitkeep
+
+config/config.homologacion.ini
+config/config.produccion.ini
+
+*.key
+*.csr
+*.crt
+*.cer
+*.pem
+
+__pycache__/
+*.pyc
+.venv/
+venv/

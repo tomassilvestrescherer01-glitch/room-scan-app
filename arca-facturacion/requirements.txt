@@ -1,0 +1,6 @@
+zeep==4.2.1
+requests==2.32.3
+# zeep todavía importa el módulo "cgi", que Python sacó de la librería
+# estándar en la versión 3.13. Este paquete lo restituye para que zeep
+# siga funcionando en Python 3.13+.
+legacy-cgi==2.6.3; python_version >= "3.13"
