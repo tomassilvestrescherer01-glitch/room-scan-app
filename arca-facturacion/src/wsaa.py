@@ -54,8 +54,8 @@ def _generar_tra() -> str:
 <loginTicketRequest version="1.0">
   <header>
     <uniqueId>{unique_id}</uniqueId>
-    <generationTime>{generation_time.strftime('%Y-%m-%dT%H:%M:%S%z')}</generationTime>
-    <expirationTime>{expiration_time.strftime('%Y-%m-%dT%H:%M:%S%z')}</expirationTime>
+    <generationTime>{generation_time.isoformat(timespec='seconds')}</generationTime>
+    <expirationTime>{expiration_time.isoformat(timespec='seconds')}</expirationTime>
   </header>
   <service>{WSAA_SERVICE}</service>
 </loginTicketRequest>"""
