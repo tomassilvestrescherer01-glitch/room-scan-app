@@ -109,12 +109,17 @@ def _login_cms(cms_der: bytes, wsaa_url: str) -> str:
         "SOAPAction": "http://wsaa.view.sua.dvadac.desarrollosisi.com.ar/loginCms",
     }
     resp = requests.post(wsaa_url, data=body.encode("utf-8"), headers=headers, timeout=30)
-    resp.raise_for_status()
 
+    # WSAA devuelve HTTP 500 (no 200) cuando el login falla, pero el
+    # motivo real viene en el cuerpo como un SOAP Fault. Miramos el
+    # cuerpo ANTES de reventar por el status code, si no nunca veríamos
+    # el motivo real del rechazo.
     if "<faultstring>" in resp.text:
         inicio = resp.text.index("<faultstring>") + len("<faultstring>")
         fin = resp.text.index("</faultstring>")
         raise WSAAError(f"WSAA rechazó el login: {resp.text[inicio:fin]}")
+
+    resp.raise_for_status()
 
     # La respuesta trae el loginTicketResponse (otro XML) escapado adentro
     # del <loginCmsReturn>. Lo desescapamos con un import local mínimo.
